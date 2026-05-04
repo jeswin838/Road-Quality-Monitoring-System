@@ -10,6 +10,11 @@
 .user-table th { text-align: left; padding: 10px; font-size: .75rem; color: var(--muted); text-transform: uppercase; border-bottom: 1px solid var(--border); }
 .user-table td { padding: 12px 10px; font-size: .85rem; border-bottom: 1px solid var(--border); }
 .user-table tr:last-child td { border-bottom: none; }
+
+@media (max-width: 1024px) {
+  .admin-grid { grid-template-columns: 1fr; }
+  .user-card { padding: 16px; }
+}
 </style>
 {% endblock %}
 
@@ -20,19 +25,21 @@
       <h3><i class="fa-solid fa-users" style="color:var(--accent)"></i> System Users</h3>
       <button class="btn btn-secondary btn-xs" onclick="loadUsers()"><i class="fa-solid fa-rotate"></i> Refresh</button>
     </div>
-    <table class="user-table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Email</th>
-          <th>Role</th>
-          <th style="text-align:right">Actions</th>
-        </tr>
-      </thead>
-      <tbody id="userList">
-        <tr><td colspan="4" class="text-center" style="color:var(--muted)">Loading users…</td></tr>
-      </tbody>
-    </table>
+    <div class="table-responsive">
+      <table class="user-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th style="text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="userList">
+          <tr><td colspan="4" class="text-center" style="color:var(--muted)">Loading users…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <div class="user-card glass-card">
@@ -53,8 +60,8 @@
       <div class="form-group">
         <label>Role</label>
         <select id="uRole" class="form-input">
+          <option value="user">User</option>
           <option value="admin">Admin</option>
-          <option value="worker">Worker</option>
         </select>
       </div>
       <button type="submit" class="btn btn-primary btn-full" style="margin-top:10px">
@@ -112,7 +119,7 @@ document.getElementById('addUserForm').addEventListener('submit', async (e) => {
     password: document.getElementById('uPass').value,
     role:     document.getElementById('uRole').value,
   };
-  const res = await fetch('/api/register', {
+  const res = await fetch('/api/create-admin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

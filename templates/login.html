@@ -15,6 +15,10 @@
     .auth-form { display: none; text-align: left; animation: fadeIn .3s; }
     .auth-form.active { display: block; }
     @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    @media (max-width: 480px) {
+      .login-card { padding: 24px 20px; }
+      .login-container { padding: 12px; }
+    }
   </style>
 </head>
 <body class="login-body">
@@ -59,13 +63,6 @@
         <div class="form-group">
           <label><i class="fa-solid fa-lock"></i> Password</label>
           <input type="password" id="rPass" class="form-input" placeholder="Create password" required/>
-        </div>
-        <div class="form-group">
-          <label><i class="fa-solid fa-shield"></i> Create Account as</label>
-          <select id="rRole" class="form-input">
-            <option value="user">User (Limited Access)</option>
-            <option value="admin">Admin (Full Access)</option>
-          </select>
         </div>
         <button type="submit" class="btn btn-primary btn-full" id="rBtn">
           <i class="fa-solid fa-user-plus"></i> Join Platform
@@ -113,8 +110,7 @@
         body: JSON.stringify({
           name:     document.getElementById('rName').value,
           email:    document.getElementById('rEmail').value,
-          password: document.getElementById('rPass').value,
-          role:     document.getElementById('rRole').value
+          password: document.getElementById('rPass').value
         })
       });
       const data = await res.json();

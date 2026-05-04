@@ -163,7 +163,7 @@ def get_potholes():
             
             final_rows.append(r)
 
-        if limit and status:
+        if limit:
             final_rows = final_rows[:limit]
 
         return jsonify(final_rows)
@@ -189,17 +189,18 @@ def add_pothole():
     pothole   = True
 
     # 1. Duplicate check with logic to update instead of insert
-    duplicate_id = is_duplicate(supabase, latitude, longitude)
+    existing_p = is_duplicate(supabase, latitude, longitude)
     
-    if duplicate_id:
+    if existing_p:
         # Update existing pothole
+        pid = existing_p["id"]
         supabase.table("potholes").update({
-            "confidence": confidence, # Optionally take the highest or latest
-            "report_count": supabase.rpc("increment_report_count", {"row_id": duplicate_id}).execute().data or 2,
+            "confidence": confidence,
+            "report_count": (existing_p.get("report_count") or 1) + 1,
             "last_reported_at": datetime.now().isoformat()
-        }).eq("id", duplicate_id).execute()
+        }).eq("id", pid).execute()
         
-        return jsonify({"id": duplicate_id, "message": "Duplicate detected. Updated existing record."}), 200
+        return jsonify({"id": pid, "message": "Duplicate detected. Updated existing record."}), 200
 
     # 2. Image upload
     image_url = ""
@@ -286,25 +287,42 @@ def delete_pothole(pid):
 # -----------------------------------------------------------------------------
 # GET /api/stats  — summary counts
 # -----------------------------------------------------------------------------
+# Simple In-Memory Cache for Stats
+_stats_cache = {"data": None, "time": None}
+
 @api_bp.route("/stats", methods=["GET"])
 def get_stats():
+    global _stats_cache
+    now_ts = datetime.now()
+    if _stats_cache["data"] and _stats_cache["time"] and (now_ts - _stats_cache["time"]).total_seconds() < 30:
+        return jsonify(_stats_cache["data"])
+
     supabase = get_supabase()
     if not supabase: return jsonify({"total":0, "today":0, "fixed":0, "pending":0})
     
     try:
-        # 1. Fetch AI potholes and approved user reports
-        p_res = supabase.table("potholes").select("id, latitude, longitude, created_at").eq("pothole", True).execute()
-        u_res = supabase.table("user_reports").select("id, latitude, longitude, created_at").eq("status", "approved").execute()
+        # Fetch with limit to prevent performance degradation on large datasets
+        p_res = supabase.table("potholes").select("id, latitude, longitude, created_at").eq("pothole", True).order("created_at", desc=True).limit(1000).execute()
+        u_res = supabase.table("user_reports").select("id, latitude, longitude, created_at").eq("status", "approved").order("created_at", desc=True).limit(500).execute()
         
         all_rows = (p_res.data or []) + (u_res.data or [])
 
         # 2. Group/Deduplicate everything to get accurate UNIQUE count (50m)
-        from utils.helpers import haversine
+        # Sort by lat first to allow early-break optimization (future-proof)
+        all_rows.sort(key=lambda x: float(x.get("latitude", 0)))
+        
         unique_potholes = []
         for r in all_rows:
-            lat, lon = float(r["latitude"]), float(r["longitude"])
+            try:
+                lat, lon = float(r["latitude"]), float(r["longitude"])
+            except: continue
+            
             found = False
             for g in unique_potholes:
+                # Basic optimization: if lat difference is already > 50m (~0.0005 deg), skip
+                if abs(lat - float(g["latitude"])) > 0.001: continue
+                
+                from utils.helpers import haversine
                 if haversine(lat, lon, float(g["latitude"]), float(g["longitude"])) < 50.0:
                     found = True
                     break
@@ -340,13 +358,15 @@ def get_stats():
             # Fallback if SQLite fails
             pending = total
 
-        return jsonify({
+        stats_data = {
             "total": total, 
             "today": today, 
             "fixed": fixed,
             "pending": pending, 
             "in_progress": inprog
-        })
+        }
+        _stats_cache = {"data": stats_data, "time": now_ts}
+        return jsonify(stats_data)
     except Exception as e:
         print(f"[!] Stats API Error: {e}")
         return jsonify({"total":0, "today":0, "fixed":0, "pending":0, "error": str(e)})
@@ -590,13 +610,11 @@ def register():
     name     = data.get("name", "").strip()
     email    = data.get("email", "").strip()
     password = data.get("password", "").strip()
-    role     = data.get("role", "user").lower()
+    # SECURITY: Ignore incoming role, always force "user" for public register
+    role     = "user"
 
     if not name or not email or not password:
         return jsonify({"error": "All fields are required"}), 400
-    
-    if role not in ["admin", "user"]:
-        role = "user"
 
     # Check duplicate
     try:
@@ -623,6 +641,48 @@ def register():
         if "PGRST205" in err_msg or "does not exist" in err_msg.lower():
             return jsonify({"error": "Table 'users' missing in Supabase. Please run the SQL setup script."}), 404
         return jsonify({"error": f"Registration failed: {err_msg}"}), 500
+
+@api_bp.route("/create-admin", methods=["POST"])
+def create_admin():
+    """Secure endpoint only for admins to create other admins"""
+    if session.get("role") != "admin":
+        return jsonify({"error": "Unauthorized. Only admins can create admin accounts."}), 403
+
+    from app import bcrypt
+    supabase = get_supabase()
+    data = request.get_json(silent=True) or {}
+    name     = data.get("name", "").strip()
+    email    = data.get("email", "").strip()
+    password = data.get("password", "").strip()
+    role     = data.get("role", "admin").lower() # Defaults to admin
+
+    if not name or not email or not password:
+        return jsonify({"error": "All fields are required"}), 400
+
+    # Strict role validation
+    if role not in ["admin", "user"]:
+        return jsonify({"error": "Invalid role"}), 400
+
+    # Check duplicate
+    try:
+        existing = supabase.table("users").select("id").eq("email", email).execute()
+        if existing.data:
+            return jsonify({"error": "Email already exists"}), 409
+    except Exception as e:
+        return jsonify({"error": f"Database error: {str(e)}"}), 500
+
+    pw_hash = bcrypt.generate_password_hash(password).decode("utf-8")
+    
+    try:
+        res = supabase.table("users").insert({
+            "name": name,
+            "email": email,
+            "password": pw_hash,
+            "role": role
+        }).execute()
+        return jsonify({"message": f"{role.capitalize()} created successfully", "user": res.data[0]}), 201
+    except Exception as e:
+        return jsonify({"error": f"Account creation failed: {str(e)}"}), 500
 
 @api_bp.route("/login", methods=["POST"])
 def login():
@@ -886,22 +946,38 @@ def safe_route():
         except Exception as e2:
             return jsonify({"error": "Routing service unavailable", "detail": str(e2)}), 503
 
-    # 5. GEOMETRIC ACCURACY check
+    # 5. GEOMETRIC ACCURACY check & DEDUPLICATION (50m locations)
     THRESHOLD = 100.0
-    detected_on_route = []
-    encountered_severities = set()
+    detected_raw = []
     
     for p in proximate_potholes:
         dist = _point_to_route_dist(float(p["latitude"]), float(p["longitude"]), route_latlon)
         if dist <= THRESHOLD:
-            detected_on_route.append({
+            detected_raw.append({
                 "id": p["id"],
                 "lat": float(p["latitude"]),
                 "lon": float(p["longitude"]),
-                "severity": p["severity"].lower(),
+                "severity": (p.get("severity") or "medium").lower(),
                 "dist": dist
             })
-            encountered_severities.add(p["severity"].lower())
+
+    # Deduplicate detected potholes to show unique LOCATIONS
+    detected_on_route = []
+    encountered_severities = set()
+    
+    for p in detected_raw:
+        found = False
+        for g in detected_on_route:
+            # If within 50m of an already detected location, merge/ignore
+            if haversine(p["lat"], p["lon"], g["lat"], g["lon"]) < 50.0:
+                # Keep the one closest to the route or highest severity
+                if p["severity"] == "high" and g["severity"] != "high":
+                    g["severity"] = "high"
+                found = True
+                break
+        if not found:
+            detected_on_route.append(p)
+            encountered_severities.add(p["severity"])
 
     # 6. Safety classification
     safety = "safe"
@@ -937,12 +1013,12 @@ def get_alerts_unified():
     supabase = get_supabase()
     from utils.helpers import human_time, haversine
     
-    # 1. Fetch AI Potholes (active/pothole=true)
-    p_res = supabase.table("potholes").select("*").eq("pothole", True).execute()
+    # 1. Fetch AI Potholes (active/pothole=true) - Limit to most recent 500 for performance
+    p_res = supabase.table("potholes").select("*").eq("pothole", True).order("created_at", desc=True).limit(500).execute()
     potholes = p_res.data or []
     
-    # 2. Fetch User Reports (Approved + Pending)
-    u_res = supabase.table("user_reports").select("*").in_("status", ["approved", "pending"]).execute()
+    # 2. Fetch User Reports (Approved + Pending) - Limit to most recent 200
+    u_res = supabase.table("user_reports").select("*").in_("status", ["approved", "pending"]).order("created_at", desc=True).limit(200).execute()
     user_reports = u_res.data or []
     
     # 3. Get Assignments for Status

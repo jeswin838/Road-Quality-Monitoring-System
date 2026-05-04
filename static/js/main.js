@@ -4,6 +4,8 @@
 
 // ── Sidebar toggle ──────────────────────────────────────────────────────────
 const toggle = document.getElementById('sidebarToggle');
+const overlay = document.getElementById('sidebarOverlay');
+
 if (toggle) {
   toggle.addEventListener('click', () => {
     if (window.innerWidth <= 768) {
@@ -11,6 +13,12 @@ if (toggle) {
     } else {
       document.body.classList.toggle('sidebar-collapsed');
     }
+  });
+}
+
+if (overlay) {
+  overlay.addEventListener('click', () => {
+    document.body.classList.remove('sidebar-open');
   });
 }
 

@@ -18,6 +18,11 @@
 .area-bar { height: 100%; background: var(--accent); border-radius: 4px; transition: width .5s; }
 .area-label { font-size: .75rem; color: var(--muted); white-space: nowrap; }
 .area-count { font-size: .78rem; font-weight: 600; color: var(--text); min-width: 28px; text-align: right; }
+
+@media (max-width: 768px) {
+  .analytics-grid { grid-template-columns: 1fr; }
+  .chart-wrapper { height: 200px; }
+}
 </style>
 {% endblock %}
 

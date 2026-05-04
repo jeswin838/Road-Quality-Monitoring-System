@@ -111,9 +111,13 @@
 
 #fileInput { display: none; }
 
-@media (max-width: 1000px) {
-  .report-container { grid-template-columns: 1fr; height: auto; }
-  .camera-card { height: 400px; }
+@media (max-width: 1024px) {
+  .report-container { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column; }
+  .camera-card { height: 450px; flex-shrink: 0; }
+  .side-panel { padding-bottom: 20px; }
+}
+@media (max-width: 480px) {
+  .camera-card { height: 320px; }
 }
 </style>
 {% endblock %}

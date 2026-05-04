@@ -23,6 +23,11 @@
 .pagination { display: flex; gap: 6px; justify-content: flex-end; padding: 14px; }
 .page-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; font-size: 0.82rem; transition: all .2s; }
 .page-btn:hover, .page-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (max-width: 768px) {
+  .filter-toolbar { flex-direction: column; align-items: stretch; }
+  .filter-toolbar .form-group { width: 100%; }
+  .action-btns { flex-direction: column; }
+}
 </style>
 {% endblock %}
 
@@ -59,24 +64,26 @@
 
 <!-- Table -->
 <div class="table-container glass-card">
-  <table class="data-table" id="alertsTable">
-    <thead>
-      <tr>
-        <th>ID & Reports</th>
-        <th>Visual</th>
-        <th>Last Seen</th>
-        <th>Lat / Lon</th>
-        <th>Severity</th>
-        <th>Status</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody id="alertsBody">
-      <tr><td colspan="9" class="text-center" style="padding:40px;color:var(--muted)">
-        <i class="fa-solid fa-spinner fa-spin"></i> Loading…
-      </td></tr>
-    </tbody>
-  </table>
+  <div class="table-responsive">
+    <table class="data-table" id="alertsTable">
+      <thead>
+        <tr>
+          <th>ID & Reports</th>
+          <th>Visual</th>
+          <th>Last Seen</th>
+          <th>Lat / Lon</th>
+          <th>Severity</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="alertsBody">
+        <tr><td colspan="9" class="text-center" style="padding:40px;color:var(--muted)">
+          <i class="fa-solid fa-spinner fa-spin"></i> Loading…
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
   <div class="pagination" id="pagination"></div>
 </div>
 

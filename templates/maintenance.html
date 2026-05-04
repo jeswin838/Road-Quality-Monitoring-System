@@ -4,28 +4,194 @@
 
 {% block head %}
 <style>
-.maint-grid { display: grid; grid-template-columns: 380px 1fr; gap: 16px; }
-.assign-form { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 20px; height: fit-content; }
-.assign-form h3 { font-size: .95rem; font-weight: 600; margin-bottom: 16px; }
-.status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; border-radius: 20px; font-size: .75rem; font-weight: 600; }
-.sp-pending  { background: rgba(245,158,11,.15); color: #f59e0b; }
-.sp-progress { background: rgba(99,102,241,.15);  color: #6366f1; }
-.sp-done     { background: rgba(34,197,94,.15);   color: #22c55e; }
-.maint-card  { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; transition: transform .2s; }
-.maint-card:hover { transform: translateY(-2px); }
-.maint-header { display: flex; justify-content: space-between; align-items: center; }
-.maint-meta { font-size: .78rem; color: var(--muted); }
-.worker-tag { display: flex; align-items: center; gap: 6px; font-size: .82rem; font-weight: 500; }
-.worker-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: #fff; font-size: .7rem; font-weight: 700; }
-.cards-grid { display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 160px); overflow-y: auto; }
-.section-filter { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-.filter-chip { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-.filter-chip:hover { border-color: var(--accent); color: var(--accent); }
-.filter-chip.active { background: var(--accent); border-color: var(--accent); color: white; box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+.maint-grid { display: grid; grid-template-columns: 360px 1fr; gap: 24px; align-items: start; }
 
-.mini-stat { background: var(--surface); border: 1px solid var(--border); padding: 12px; border-radius: 12px; text-align: center; }
-.mini-label { display: block; font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-.mini-val { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+/* ── Form Styling ───────────────────────────────────────────────────────── */
+.assign-form { 
+  background: var(--card-bg); 
+  border: 1px solid var(--border); 
+  border-radius: 20px; 
+  padding: 24px; 
+  position: sticky;
+  top: 20px;
+}
+.assign-form h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; color: var(--text); }
+
+/* ── Stats Styling ───────────────────────────────────────────────────────── */
+.stats-container { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 24px; border-top: 1px solid var(--border); padding-top: 24px; }
+.mini-stat { background: rgba(255,255,255,0.03); border: 1px solid var(--border); padding: 16px; border-radius: 16px; transition: all 0.2s; }
+.mini-stat:hover { border-color: var(--accent); background: rgba(99,102,241,0.05); }
+.mini-label { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 700; display: block; margin-bottom: 6px; }
+.mini-val { font-size: 1.4rem; font-weight: 800; color: var(--text); }
+
+/* ── Card Styling ───────────────────────────────────────────────────────── */
+.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.maint-card { 
+  background: var(--card-bg); 
+  border: 1px solid var(--border); 
+  border-radius: 16px; 
+  padding: 20px; 
+  display: flex; 
+  flex-direction: column; 
+  gap: 12px; 
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+.maint-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; width: 4px; height: 100%;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+.maint-card:hover { transform: translateY(-4px); box-shadow: 0 12px 24px rgba(0,0,0,0.2); border-color: rgba(99,102,241,0.3); }
+.maint-card:hover::before { opacity: 1; }
+
+.maint-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.pothole-id-tag { font-size: 0.95rem; font-weight: 700; color: var(--text); }
+
+.status-pill { 
+  display: inline-flex; 
+  align-items: center; 
+  gap: 6px; 
+  padding: 6px 12px; 
+  border-radius: 10px; 
+  font-size: 0.7rem; 
+  font-weight: 700; 
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.sp-pending  { background: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.2); }
+.sp-progress { background: rgba(59,130,246,0.1);  color: #3b82f6; border: 1px solid rgba(59,130,246,0.2); }
+.sp-done     { background: rgba(34,197,94,0.1);   color: #22c55e; border: 1px solid rgba(34,197,94,0.2); }
+
+.worker-info { display: flex; align-items: center; gap: 12px; margin: 4px 0; }
+.worker-avatar { 
+  width: 36px; height: 36px; 
+  border-radius: 12px; 
+  background: var(--accent); 
+  display: flex; align-items: center; justify-content: center; 
+  color: #fff; font-size: 0.85rem; font-weight: 700;
+  box-shadow: 0 4px 8px rgba(99,102,241,0.3);
+}
+.worker-name { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+
+.maint-meta-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.meta-item { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; color: var(--muted); }
+.meta-item i { font-size: 0.8rem; opacity: 0.7; }
+
+.maint-notes { 
+  font-size: 0.82rem; 
+  color: var(--text); 
+  background: rgba(0,0,0,0.2); 
+  padding: 10px 14px; 
+  border-radius: 10px; 
+  line-height: 1.5;
+  border-left: 2px solid var(--border);
+}
+
+.action-bar { 
+    display: flex; gap: 8px; margin-top: 8px; border-top: 1px solid var(--border); padding-top: 16px;
+}
+
+/* ── Filter & Search ────────────────────────────────────────────────────── */
+.list-controls { 
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 16px; flex-wrap: wrap;
+    background: rgba(255,255,255,0.02);
+    padding: 12px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+}
+
+.section-filter { 
+    display: flex; 
+    gap: 4px; 
+    background: rgba(0,0,0,0.2); 
+    padding: 4px; 
+    border-radius: 14px;
+    border: 1px solid var(--border);
+}
+
+.filter-chip { 
+    padding: 8px 18px; 
+    border-radius: 10px; 
+    border: none; 
+    background: transparent; 
+    color: var(--muted); 
+    font-size: 0.75rem; 
+    font-weight: 700; 
+    cursor: pointer; 
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.filter-chip:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+
+.filter-chip.active { 
+    background: var(--accent); 
+    color: white; 
+    box-shadow: 0 4px 12px rgba(99,102,241,0.4); 
+}
+
+/* Specific filter colors when active */
+.filter-chip.active[data-val="Pending"] { background: #f59e0b; box-shadow: 0 4px 12px rgba(245,158,11,0.3); }
+.filter-chip.active[data-val="In Progress"] { background: #3b82f6; box-shadow: 0 4px 12px rgba(59,130,246,0.3); }
+.filter-chip.active[data-val="Fixed"] { background: #22c55e; box-shadow: 0 4px 12px rgba(34,197,94,0.3); }
+
+.search-box { 
+    position: relative; 
+    flex: 1; 
+    max-width: 340px; 
+}
+
+.search-box i { 
+    position: absolute; 
+    left: 16px; 
+    top: 50%; 
+    transform: translateY(-50%); 
+    color: var(--muted); 
+    font-size: 0.9rem;
+    transition: all 0.3s ease;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.search-box input { 
+    width: 100%;
+    padding: 12px 16px 12px 46px; 
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.search-box input:focus { 
+    background: rgba(0,0,0,0.5);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(99,102,241,0.15), 0 8px 24px rgba(0,0,0,0.3);
+    outline: none;
+}
+
+.search-box input:focus + i {
+    color: var(--accent);
+    transform: translateY(-50%) scale(1.1);
+}
+
+.search-box input::placeholder {
+    color: var(--muted);
+    opacity: 0.5;
+}
+
+@media (max-width: 1100px) {
+  .maint-grid { grid-template-columns: 1fr; }
+  .assign-form { position: static; }
+}
 </style>
 {% endblock %}
 
@@ -73,14 +239,25 @@
 
   <!-- Assignments List -->
   <div>
-    <div class="section-filter">
-      <button class="filter-chip active" data-val="" onclick="filterMaint(this)">All</button>
-      <button class="filter-chip" data-val="Pending"     onclick="filterMaint(this)">Pending</button>
-      <button class="filter-chip" data-val="In Progress" onclick="filterMaint(this)">In Progress</button>
-      <button class="filter-chip" data-val="Fixed"       onclick="filterMaint(this)">Fixed</button>
+    <div class="list-controls">
+      <div class="section-filter">
+        <button class="filter-chip active" data-val="" onclick="filterMaint(this)">All</button>
+        <button class="filter-chip" data-val="Pending"     onclick="filterMaint(this)">Pending</button>
+        <button class="filter-chip" data-val="In Progress" onclick="filterMaint(this)">In Progress</button>
+        <button class="filter-chip" data-val="Fixed"       onclick="filterMaint(this)">Fixed</button>
+      </div>
+      <div class="search-box">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" id="maintSearch" class="form-input" placeholder="Search workers or IDs..." oninput="renderMaintCards()"/>
+      </div>
     </div>
+    
     <div class="cards-grid" id="maintCards">
-      <p style="color:var(--muted)">Loading…</p>
+      <!-- Cards rendered here -->
+      <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--muted)">
+        <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+        <p style="margin-top: 12px">Syncing assignments...</p>
+      </div>
     </div>
   </div>
 </div>
@@ -116,39 +293,70 @@ function filterMaint(el) {
 }
 
 function renderMaintCards() {
-  const list = maintFilter ? assignments.filter(a => {
-    const status = a.status === 'Completed' ? 'Fixed' : a.status;
-    return status === maintFilter;
-  }) : assignments;
+  const search = document.getElementById('maintSearch').value.toLowerCase();
+  
+  let list = assignments;
+  if (maintFilter) {
+    list = list.filter(a => {
+        const status = a.status === 'Completed' ? 'Fixed' : a.status;
+        return status === maintFilter;
+    });
+  }
+  if (search) {
+    list = list.filter(a => 
+        a.worker_name.toLowerCase().includes(search) || 
+        `#${a.pothole_id}`.includes(search) ||
+        (a.notes || '').toLowerCase().includes(search)
+    );
+  }
+
   const container = document.getElementById('maintCards');
   if (!list.length) {
-    container.innerHTML = '<p style="color:var(--muted)">No assignments found.</p>';
+    container.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 60px; color: var(--muted); background: var(--card-bg); border-radius: 20px; border: 1px dashed var(--border)">
+        <i class="fa-solid fa-folder-open fa-3x" style="margin-bottom:16px; opacity:0.3"></i>
+        <p>No matching assignments found.</p>
+    </div>`;
     return;
   }
+
   container.innerHTML = list.map(a => {
     const initials = a.worker_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
     const status = a.status === 'Completed' ? 'Fixed' : a.status;
     const spClass  = status==='Fixed' ? 'sp-done' : status==='In Progress' ? 'sp-progress' : 'sp-pending';
+    const sevColor = a.severity==='High'?'#ef4444':a.severity==='Medium'?'#f97316':'#22c55e';
+    
     return `
-    <div class="maint-card glass-card">
+    <div class="maint-card">
       <div class="maint-header">
-        <span style="font-weight:600;font-size:.85rem">Pothole #${a.pothole_id}</span>
-        <span class="status-pill ${spClass}"><i class="fa-solid fa-circle" style="font-size:.5rem"></i>${status}</span>
+        <span class="pothole-id-tag">Pothole #${a.pothole_id}</span>
+        <span class="status-pill ${spClass}">${status}</span>
       </div>
-      <div class="worker-tag">
+
+      <div class="worker-info">
         <div class="worker-avatar">${initials}</div>
-        <span>${a.worker_name}</span>
+        <div class="worker-name">${a.worker_name}</div>
       </div>
-      ${a.notes ? `<p class="maint-meta">${a.notes}</p>` : ''}
-      <div class="maint-meta">
-        <i class="fa-regular fa-clock"></i> ${formatDate(a.assigned_at)}
-        ${a.severity ? `&nbsp;|&nbsp; <i class="fa-solid fa-circle" style="color:${a.severity==='High'?'#ef4444':a.severity==='Medium'?'#f97316':'#22c55e'};font-size:.5rem"></i> ${a.severity}` : ''}
-        ${a.latitude ? `&nbsp;|&nbsp; ${(+a.latitude).toFixed(4)}, ${(+a.longitude).toFixed(4)}` : ''}
+
+      ${a.notes ? `<div class="maint-notes">${a.notes}</div>` : ''}
+
+      <div class="maint-meta-row">
+        <div class="meta-item"><i class="fa-regular fa-calendar"></i> ${formatDate(a.assigned_at)}</div>
+        ${a.severity ? `<div class="meta-item"><i class="fa-solid fa-triangle-exclamation" style="color:${sevColor}"></i> ${a.severity}</div>` : ''}
+        ${a.latitude ? `<div class="meta-item"><i class="fa-solid fa-location-dot"></i> ${(+a.latitude).toFixed(4)}, ${(+a.longitude).toFixed(4)}</div>` : ''}
       </div>
-      <div class="action-btns" style="margin-top:4px">
-        ${status!=='In Progress' && status!=='Fixed' ? `<button class="btn btn-xs btn-accent"  onclick="updateAssign(${a.id},'In Progress')"><i class="fa-solid fa-play"></i> Start</button>` : ''}
-        ${status!=='Fixed' ? `<button class="btn btn-xs btn-success" onclick="updateAssign(${a.id},'Fixed')"><i class="fa-solid fa-check"></i> Done</button>` : ''}
-        <button class="btn btn-xs btn-danger" onclick="openDeleteModal(${a.id}, 'assignment')"><i class="fa-solid fa-trash"></i></button>
+
+      <div class="action-bar">
+        ${status!=='In Progress' && status!=='Fixed' ? `
+            <button class="btn btn-xs btn-accent" onclick="updateAssign(${a.id},'In Progress')" style="flex:1">
+                <i class="fa-solid fa-play"></i> Start
+            </button>` : ''}
+        ${status!=='Fixed' ? `
+            <button class="btn btn-xs btn-success" onclick="updateAssign(${a.id},'Fixed')" style="flex:1">
+                <i class="fa-solid fa-check"></i> Done
+            </button>` : ''}
+        <button class="btn btn-xs btn-danger" onclick="openDeleteModal(${a.id}, 'assignment')" style="width:36px; padding:0">
+            <i class="fa-solid fa-trash"></i>
+        </button>
       </div>
     </div>`; }).join('');
 }
