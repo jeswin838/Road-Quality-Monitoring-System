@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Maintenance — Pothole Monitor{% endblock %}
+{% block page_title %}Maintenance Tracking{% endblock %}
+
+{% block head %}
+<style>
+.maint-grid { display: grid; grid-template-columns: 380px 1fr; gap: 16px; }
+.assign-form { background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 20px; height: fit-content; }
+.assign-form h3 { font-size: .95rem; font-weight: 600; margin-bottom: 16px; }
+.status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; border-radius: 20px; font-size: .75rem; font-weight: 600; }
+.sp-pending  { background: rgba(245,158,11,.15); color: #f59e0b; }
+.sp-progress { background: rgba(99,102,241,.15);  color: #6366f1; }
+.sp-done     { background: rgba(34,197,94,.15);   color: #22c55e; }
+.maint-card  { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; transition: transform .2s; }
+.maint-card:hover { transform: translateY(-2px); }
+.maint-header { display: flex; justify-content: space-between; align-items: center; }
+.maint-meta { font-size: .78rem; color: var(--muted); }
+.worker-tag { display: flex; align-items: center; gap: 6px; font-size: .82rem; font-weight: 500; }
+.worker-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: #fff; font-size: .7rem; font-weight: 700; }
+.cards-grid { display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 160px); overflow-y: auto; }
+.section-filter { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.filter-chip { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+.filter-chip:hover { border-color: var(--accent); color: var(--accent); }
+.filter-chip.active { background: var(--accent); border-color: var(--accent); color: white; box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+
+.mini-stat { background: var(--surface); border: 1px solid var(--border); padding: 12px; border-radius: 12px; text-align: center; }
+.mini-label { display: block; font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.mini-val { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="maint-grid">
+  <!-- Assignment Form -->
+  <div class="assign-form glass-card">
+    <h3><i class="fa-solid fa-user-plus" style="color:var(--accent)"></i> Assign Pothole</h3>
+    <div class="form-group">
+      <label>Pothole ID</label>
+      <input type="number" id="mPotholeId" class="form-input" placeholder="e.g. 42"/>
+    </div>
+    <div class="form-group">
+      <label>Worker Name</label>
+      <input type="text" id="mWorkerName" class="form-input" placeholder="Worker name"/>
+    </div>
+    <div class="form-group">
+      <label>Notes</label>
+      <textarea id="mNotes" class="form-input" rows="3" placeholder="Optional notes…"></textarea>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="assignWorker()">
+      <i class="fa-solid fa-paper-plane"></i> Assign
+    </button>
+
+    <!-- Quick stats -->
+    <div style="margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="mini-stat">
+        <span class="mini-label">Pending</span>
+        <span class="mini-val" id="ms-pending">—</span>
+      </div>
+      <div class="mini-stat">
+        <span class="mini-label">In Progress</span>
+        <span class="mini-val" id="ms-progress">—</span>
+      </div>
+      <div class="mini-stat">
+        <span class="mini-label">Fixed</span>
+        <span class="mini-val" id="ms-done">—</span>
+      </div>
+      <div class="mini-stat">
+        <span class="mini-label">Assigned Total</span>
+        <span class="mini-val" id="ms-total">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Assignments List -->
+  <div>
+    <div class="section-filter">
+      <button class="filter-chip active" data-val="" onclick="filterMaint(this)">All</button>
+      <button class="filter-chip" data-val="Pending"     onclick="filterMaint(this)">Pending</button>
+      <button class="filter-chip" data-val="In Progress" onclick="filterMaint(this)">In Progress</button>
+      <button class="filter-chip" data-val="Fixed"       onclick="filterMaint(this)">Fixed</button>
+    </div>
+    <div class="cards-grid" id="maintCards">
+      <p style="color:var(--muted)">Loading…</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let assignments = [], maintFilter = '';
+
+async function loadAssignments() {
+  const res = await fetch('/api/assignments');
+  assignments = await res.json();
+  updateMiniStats();
+  renderMaintCards();
+}
+
+function updateMiniStats() {
+  const cnt = s => assignments.filter(a => {
+    const status = a.status === 'Completed' ? 'Fixed' : a.status;
+    return status === s;
+  }).length;
+  document.getElementById('ms-pending').textContent  = cnt('Pending');
+  document.getElementById('ms-progress').textContent = cnt('In Progress');
+  document.getElementById('ms-done').textContent     = cnt('Fixed');
+  document.getElementById('ms-total').textContent    = assignments.length;
+}
+
+function filterMaint(el) {
+  document.querySelectorAll('.section-filter .filter-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  maintFilter = el.dataset.val;
+  renderMaintCards();
+}
+
+function renderMaintCards() {
+  const list = maintFilter ? assignments.filter(a => {
+    const status = a.status === 'Completed' ? 'Fixed' : a.status;
+    return status === maintFilter;
+  }) : assignments;
+  const container = document.getElementById('maintCards');
+  if (!list.length) {
+    container.innerHTML = '<p style="color:var(--muted)">No assignments found.</p>';
+    return;
+  }
+  container.innerHTML = list.map(a => {
+    const initials = a.worker_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
+    const status = a.status === 'Completed' ? 'Fixed' : a.status;
+    const spClass  = status==='Fixed' ? 'sp-done' : status==='In Progress' ? 'sp-progress' : 'sp-pending';
+    return `
+    <div class="maint-card glass-card">
+      <div class="maint-header">
+        <span style="font-weight:600;font-size:.85rem">Pothole #${a.pothole_id}</span>
+        <span class="status-pill ${spClass}"><i class="fa-solid fa-circle" style="font-size:.5rem"></i>${status}</span>
+      </div>
+      <div class="worker-tag">
+        <div class="worker-avatar">${initials}</div>
+        <span>${a.worker_name}</span>
+      </div>
+      ${a.notes ? `<p class="maint-meta">${a.notes}</p>` : ''}
+      <div class="maint-meta">
+        <i class="fa-regular fa-clock"></i> ${formatDate(a.assigned_at)}
+        ${a.severity ? `&nbsp;|&nbsp; <i class="fa-solid fa-circle" style="color:${a.severity==='High'?'#ef4444':a.severity==='Medium'?'#f97316':'#22c55e'};font-size:.5rem"></i> ${a.severity}` : ''}
+        ${a.latitude ? `&nbsp;|&nbsp; ${(+a.latitude).toFixed(4)}, ${(+a.longitude).toFixed(4)}` : ''}
+      </div>
+      <div class="action-btns" style="margin-top:4px">
+        ${status!=='In Progress' && status!=='Fixed' ? `<button class="btn btn-xs btn-accent"  onclick="updateAssign(${a.id},'In Progress')"><i class="fa-solid fa-play"></i> Start</button>` : ''}
+        ${status!=='Fixed' ? `<button class="btn btn-xs btn-success" onclick="updateAssign(${a.id},'Fixed')"><i class="fa-solid fa-check"></i> Done</button>` : ''}
+        <button class="btn btn-xs btn-danger" onclick="openDeleteModal(${a.id}, 'assignment')"><i class="fa-solid fa-trash"></i></button>
+      </div>
+    </div>`; }).join('');
+}
+
+async function assignWorker() {
+  const pid  = document.getElementById('mPotholeId').value;
+  const name = document.getElementById('mWorkerName').value.trim();
+  if (!pid || !name) { showToast('Fill pothole ID and worker name', 'error'); return; }
+  const res = await fetch('/api/assignments', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ pothole_id: +pid, worker_name: name, notes: document.getElementById('mNotes').value })
+  });
+  const d = await res.json();
+  if (res.ok) {
+    showToast('Worker assigned ✓', 'success');
+    document.getElementById('mPotholeId').value = '';
+    document.getElementById('mWorkerName').value = '';
+    document.getElementById('mNotes').value = '';
+    loadAssignments();
+  } else {
+    showToast(d.error || 'Error', 'error');
+  }
+}
+
+async function updateAssign(id, status) {
+  await fetch(`/api/assignments/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status}) });
+  showToast(`Status → ${status}`, 'success');
+  loadAssignments();
+}
+
+function formatDate(s) { if (!s) return '—'; const d = new Date(s); return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
+
+loadAssignments();
+</script>
+{% endblock %}

@@ -1,0 +1,72 @@
+import math
+
+def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return distance in metres between two GPS coordinates."""
+    R = 6_371_000  # Earth radius in metres
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi  = math.radians(lat2 - lat1)
+    dlam  = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def is_duplicate(supabase, lat: float, lon: float, threshold_m: float = 50.0):
+    """
+    Checks if a pothole exists within threshold_m using a bounding box filter (±0.0005 deg).
+    Returns existing pothole record if found, else None.
+    """
+    try:
+        # Bounding box filter for performance (approx 55m at 0.0005)
+        res = supabase.table("potholes")\
+            .select("*")\
+            .eq("pothole", True)\
+            .gte("latitude", lat - 0.0005)\
+            .lte("latitude", lat + 0.0005)\
+            .gte("longitude", lon - 0.0005)\
+            .lte("longitude", lon + 0.0005)\
+            .execute()
+            
+        for p in res.data:
+            dist = haversine(lat, lon, float(p["latitude"]), float(p["longitude"]))
+            if dist < threshold_m:
+                return p
+    except Exception as e:
+        print(f"Duplicate check error: {e}")
+        
+    return None
+
+
+def filter_by_confidence(records: list, threshold: float = 0.5) -> list:
+    """Remove records whose confidence is below threshold."""
+    return [r for r in records if (r.get("confidence") or 0) >= threshold]
+
+
+def allowed_file(filename: str, allowed: set) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed
+
+
+def human_time(dt_str: str) -> str:
+    """Convert ISO timestamp to human readable relative time."""
+    if not dt_str: return "unknown"
+    try:
+        from datetime import datetime, timezone
+        import math
+        
+        # Parse timestamp (handle Z and offset formats)
+        try:
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        except:
+            dt = datetime.strptime(dt_str.split('.')[0], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            
+        now = datetime.now(timezone.utc)
+        diff = (now - dt).total_seconds()
+        
+        if diff < 0: diff = 0 # Future safety
+        if diff < 60: return "just now"
+        if diff < 3600: return f"{math.floor(diff/60)} min ago"
+        if diff < 86400: return f"{math.floor(diff/3600)} hours ago"
+        if diff < 604800: return f"{math.floor(diff/86400)} days ago"
+        return dt.strftime("%b %d, %Y")
+    except Exception as e:
+        print(f"Time parse error: {e}")
+        return dt_str

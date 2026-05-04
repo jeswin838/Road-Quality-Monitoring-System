@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block title %}Review User Reports — PotholePro{% endblock %}
+{% block page_title %}User-Submitted Pothole Reports{% endblock %}
+
+{% block head %}
+<style>
+.reports-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+  padding: 10px 0;
+}
+
+.report-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  transition: transform 0.3s, box-shadow 0.3s;
+}
+
+.report-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+
+.report-media {
+  width: 100%;
+  height: 200px;
+  background: #000;
+  position: relative;
+}
+
+.report-media img, .report-media video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.report-info {
+  padding: 18px;
+}
+
+.report-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.report-desc {
+  font-size: 0.9rem;
+  margin-bottom: 15px;
+  line-height: 1.4;
+  height: 40px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.report-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.status-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  backdrop-filter: blur(5px);
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 100px 0;
+  color: var(--muted);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="reports-container glass-card" style="padding:24px; border-radius:24px">
+  <div class="reports-header" style="margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px;">
+    <div class="filter-tabs" style="display: flex; gap: 8px;">
+      <button class="btn btn-secondary btn-sm active" onclick="loadReports('pending', this)" style="border-radius:12px; padding:8px 20px">
+        <i class="fa-solid fa-hourglass-half"></i> Pending
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="loadReports('approved', this)" style="border-radius:12px; padding:8px 20px">
+        <i class="fa-solid fa-circle-check"></i> Approved
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="loadReports('rejected', this)" style="border-radius:12px; padding:8px 20px">
+        <i class="fa-solid fa-circle-xmark"></i> Rejected
+      </button>
+    </div>
+    <div style="display:flex; gap:12px; align-items:center">
+      <span id="reportCounter" style="font-size:0.8rem; color:var(--muted); font-weight:600">0 reports</span>
+      <button class="btn btn-secondary btn-sm" onclick="loadReports()" style="border-radius:50%; width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center" title="Refresh">
+        <i class="fa-solid fa-rotate"></i>
+      </button>
+    </div>
+  </div>
+
+  <div id="reportsGrid" class="reports-grid">
+    <!-- Dynamic content -->
+  </div>
+</div>
+
+<div id="emptyState" class="empty-state" style="display:none">
+  <i class="fa-solid fa-clipboard-check" style="font-size: 48px; margin-bottom: 15px; opacity: 0.3"></i>
+  <p>No reports found in this category.</p>
+</div>
+<!-- Confirmation Modal -->
+<div class="modal-overlay" id="reportActionModal" style="display:none">
+  <div class="modal-box" style="max-width:340px; text-align:center">
+    <div class="modal-header">
+      <h3 id="modalTitle"><i class="fa-solid fa-circle-question"></i> Confirm Action</h3>
+      <button class="modal-close" onclick="closeActionModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p id="modalBodyText" style="margin:20px 0; color:var(--muted)">Are you sure you want to perform this action?</p>
+    </div>
+    <div class="modal-footer" style="flex-direction:column; gap:8px">
+      <button class="btn btn-full" id="modalConfirmBtn">Confirm</button>
+      <button class="btn btn-secondary btn-full" onclick="closeActionModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentStatus = 'pending';
+let pendingAction = null;
+
+async function loadReports(status = currentStatus, btn = null) {
+  currentStatus = status;
+  if (btn) {
+    document.querySelectorAll('.filter-tabs .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  const grid = document.getElementById('reportsGrid');
+  const empty = document.getElementById('emptyState');
+  grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 50px;"><i class="fa-solid fa-spinner fa-spin fa-2x"></i></div>';
+  empty.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/user-reports?status=${status}`);
+    const reports = await res.json();
+    const counterEl = document.getElementById('reportCounter');
+    if (counterEl) counterEl.textContent = `${reports.length} reports`;
+
+    if (reports.length === 0) {
+      grid.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+
+    grid.innerHTML = reports.map(r => {
+      const status = r.status || 'pending';
+      const badgeColor = status === 'approved' ? 'var(--success)' : status === 'rejected' ? 'var(--danger)' : 'var(--warning)';
+      
+      return `
+      <div class="report-card" id="report-${r.id}">
+        <div class="report-media">
+          ${r.type === 'video' 
+            ? `<video src="${r.media_url}" controls></video>` 
+            : `<img src="${r.media_url}" alt="Report" onclick="window.open('${r.media_url}', '_blank')"/>`
+          }
+          <div class="status-badge" style="background:${badgeColor}; color:#fff; border:1px solid rgba(255,255,255,0.2)">
+             ${status.toUpperCase()}
+          </div>
+        </div>
+        <div class="report-info">
+          <div class="report-meta">
+            <span><i class="fa-solid fa-calendar"></i> ${new Date(r.created_at).toLocaleDateString()}</span>
+            <span><i class="fa-solid fa-location-dot"></i> ${r.latitude.toFixed(4)}, ${r.longitude.toFixed(4)}</span>
+          </div>
+          <p class="report-desc">${r.description || 'No description provided.'}</p>
+          ${status === 'pending' ? `
+            <div class="report-actions">
+              <button class="btn btn-primary btn-sm" style="background:var(--success); border-color:var(--success)" onclick="openActionModal(${r.id}, 'approve')">
+                <i class="fa-solid fa-check"></i> Approve
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="openActionModal(${r.id}, 'reject')">
+                <i class="fa-solid fa-xmark"></i> Reject
+              </button>
+            </div>
+          ` : `
+            <div style="text-align:center; font-size:0.75rem; color:var(--muted); border-top:1px solid var(--border); padding-top:10px">
+               Report is ${status}.
+            </div>
+          `}
+        </div>
+      </div>`;
+    }).join('');
+
+  } catch (err) {
+    showToast("Failed to load reports", "error");
+  }
+}
+
+function openActionModal(id, action) {
+  pendingAction = { id, action };
+  const modal = document.getElementById('reportActionModal');
+  const title = document.getElementById('modalTitle');
+  const text = document.getElementById('modalBodyText');
+  const confirmBtn = document.getElementById('modalConfirmBtn');
+
+  if (action === 'approve') {
+    title.innerHTML = '<i class="fa-solid fa-circle-check" style="color:var(--success)"></i> Approve Report';
+    text.textContent = 'Approving this report will add it to the live pothole database. Continue?';
+    confirmBtn.className = 'btn btn-primary btn-full';
+    confirmBtn.textContent = 'Yes, Approve';
+  } else {
+    title.innerHTML = '<i class="fa-solid fa-circle-xmark" style="color:var(--danger)"></i> Reject Report';
+    text.textContent = 'Are you sure you want to reject this citizen report? It will be marked as rejected.';
+    confirmBtn.className = 'btn btn-danger btn-full';
+    confirmBtn.textContent = 'Yes, Reject';
+  }
+
+  confirmBtn.onclick = executePendingAction;
+  modal.style.display = 'flex';
+}
+
+function closeActionModal() {
+  document.getElementById('reportActionModal').style.display = 'none';
+  pendingAction = null;
+}
+
+async function executePendingAction() {
+  if (!pendingAction) return;
+  const { id, action } = pendingAction;
+  
+  closeActionModal();
+  showToast(`${action === 'approve' ? 'Approving' : 'Rejecting'} report...`, 'info');
+
+  try {
+    const res = await fetch('/api/user-reports/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action })
+    });
+    const data = await res.json();
+
+    if (res.ok) {
+      showToast(data.message, "success");
+      loadReports();
+    } else {
+      showToast(data.error || "Action failed", "error");
+    }
+  } catch (err) {
+    showToast("Network error", "error");
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => loadReports());
+</script>
+{% endblock %}
