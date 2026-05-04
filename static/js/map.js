@@ -20,11 +20,9 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 // ── State ───────────────────────────────────────────────────────────────────
 let markerClusterGroup = L.markerClusterGroup({ maxClusterRadius: 50, disableClusteringAtZoom: 17 });
-let heatLayer          = null;
 let allData            = [];
 let userReports        = [];
 let showClusters       = true;
-let showHeatmap        = false;
 let refreshTimer       = null;
 let activeFilters      = { severity: '', status: '', confidence: 0 };
 let userMarker         = null;
@@ -39,47 +37,56 @@ function initGeolocation() {
       (pos) => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
+        
+        // Basic sanity check
+        if (Math.abs(lat) < 0.1 && Math.abs(lon) < 0.1) return;
+
         map.setView([lat, lon], 14);
         userMarker = L.circleMarker([lat, lon], { radius: 10, color: '#6366f1', fillOpacity: 0.7 })
           .addTo(map).bindPopup('My Location').openPopup();
       }, 
       (err) => {
-        let msg = "GPS unavailable. Using default location.";
-        if (err.code === 1) msg = "GPS permission denied.";
-        else if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
-           msg = "GPS Error: Secure connection (HTTPS) required for geolocation.";
-        }
-        console.warn(msg, err);
-        if (typeof showToast === 'function') showToast(msg, 'warning');
-      }
+        console.warn("GPS unavailable on init", err);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   }
 }
 
 function locateMe() {
   if ('geolocation' in navigator) {
+    if (typeof showToast === 'function') showToast('Getting your location...', 'info', 2000);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
+        
+        if (Math.abs(lat) < 0.1 && Math.abs(lon) < 0.1) {
+          if (typeof showToast === 'function') showToast('Low accuracy GPS data. Please try again.', 'warning');
+          return;
+        }
+
         map.setView([lat, lon], 16);
         if (userMarker) {
           userMarker.setLatLng([lat, lon]);
+          userMarker.openPopup();
         } else {
           userMarker = L.circleMarker([lat, lon], { radius: 10, color: '#6366f1', fillOpacity: 0.7 })
             .addTo(map).bindPopup('My Location').openPopup();
         }
+        if (typeof showToast === 'function') showToast('Located ✓', 'success');
       },
       (err) => {
-        let msg = "Geolocation failed.";
+        let msg = "Geolocation failed: " + err.message;
         if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
            msg = "Secure connection (HTTPS) required for GPS.";
         }
         if (typeof showToast === 'function') showToast(msg, 'error');
-      }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   } else {
-    if (typeof showToast === 'function') showToast('Location not available', 'warning');
+    if (typeof showToast === 'function') showToast('Location not supported', 'warning');
   }
 }
 
@@ -203,21 +210,16 @@ async function loadMarkers() {
 
 function renderMarkers() {
   markerClusterGroup.clearLayers();
-  if (heatLayer) map.removeLayer(heatLayer);
-
-  const heatPoints = [];
 
     allData.forEach(r => {
     const lat = parseFloat(r.latitude);
     const lon = parseFloat(r.longitude);
     if (isNaN(lat) || isNaN(lon)) return;
     
-    heatPoints.push([lat, lon, (r.report_count || 1) * 0.5]);
-    
     if (showClusters) {
       const isUserReport = r.type === 'user_report';
       const color = isUserReport ? '#3b82f6' : (r.severity === 'high' ? '#ef4444' : r.severity === 'medium' ? '#f97316' : '#22c55e');
-      const marker = L.marker([lat, lon], { icon: makeIcon(color) });
+      const marker = L.marker([lat, lon], { icon: makeIcon(r.severity, isUserReport) });
       
       const popupHtml = `
         <div style="min-width:180px; font-family:Inter,sans-serif; color:#e6edf3">
@@ -245,12 +247,6 @@ function renderMarkers() {
     }
   });
 
-  if (showHeatmap) {
-    heatLayer = L.heatLayer(heatPoints, {
-      radius: 25, blur: 20, maxZoom: 17,
-      gradient: { 0.2: '#22c55e', 0.5: '#f97316', 0.8: '#ef4444' },
-    }).addTo(map);
-  }
 }
 
 // ── Stats cards ──────────────────────────────────────────────────────────────
@@ -273,11 +269,6 @@ function toggleClusters() {
   renderMarkers();
 }
 
-function toggleHeatmap() {
-  showHeatmap = !showHeatmap;
-  document.getElementById('btnHeatmap').classList.toggle('active', showHeatmap);
-  renderMarkers();
-}
 
 // ── Filter chips ─────────────────────────────────────────────────────────────
 document.querySelectorAll('#severityFilters .filter-chip').forEach(btn => {

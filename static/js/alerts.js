@@ -65,6 +65,32 @@ function renderAlertPanel(alerts) {
   });
 
   if (countEl) countEl.textContent = recent.length;
+
+  // ── Handle Admin Emergency Alerts ───────────────────────────────────────
+  const emergencyPanel = document.getElementById('adminEmergencyAlert');
+  const emergencyList  = document.getElementById('emergencyAlertList');
+  if (emergencyPanel && emergencyList) {
+    const critical = alerts.filter(r => (r.severity || '').toLowerCase() === 'high' && (r.report_count || 0) > 3);
+    if (critical.length > 0) {
+      emergencyPanel.style.display = 'block';
+      emergencyList.innerHTML = critical.map(r => `
+        <div style="padding:12px; background:rgba(239,68,68,0.12); border-radius:14px; border:1px solid rgba(239,68,68,0.2); display:flex; flex-direction:column; gap:4px; transition: all 0.2s">
+            <div style="display:flex; justify-content:space-between; align-items:center">
+                <b style="color:#ef4444; font-size:0.85rem">🚨 Hazard #${r.id}</b>
+                <span style="font-size:0.65rem; background:#ef4444; color:#fff; padding:2px 8px; border-radius:10px; font-weight:800">CRITICAL</span>
+            </div>
+            <div style="opacity:0.9; font-size:0.75rem; color:var(--text)">
+                <i class="fa-solid fa-users" style="margin-right:4px"></i> ${r.report_count} citizen reports
+            </div>
+            <div style="opacity:0.7; font-size:0.7rem; color:var(--muted)">
+                <i class="fa-solid fa-location-dot" style="margin-right:4px"></i> ${r.latitude}, ${r.longitude}
+            </div>
+        </div>
+      `).join('');
+    } else {
+      emergencyPanel.style.display = 'none';
+    }
+  }
 }
 
 // ── Detect new arrivals & notify ────────────────────────────────────────────

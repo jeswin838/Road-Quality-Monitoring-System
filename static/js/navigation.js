@@ -19,11 +19,15 @@ let startLatLon       = null;
 let endLatLon         = null;
 let startMarker       = null;
 let endMarker         = null;
+let userMarker        = null;      // Current GPS location
+let userLatLon        = null;
 let safeRouteLayer    = null;
 let fallbackRouteLayer= null;
 let potholeLayerGroup = null;
 let dangerZoneGroup   = null;
 let refreshTimer      = null;
+let notifyTimer       = null;
+let lastNotifiedId    = null;
 
 /* ── Icons ────────────────────────────────────────────────────────────────── */
 function makeIcon(color, label) {
@@ -126,12 +130,54 @@ function useMyLocation() {
     pos => {
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
+      
+      // Basic sanity check for GPS data
+      if (Math.abs(lat) < 0.1 && Math.abs(lng) < 0.1) {
+        showToast('Low accuracy GPS data received. Please try again.', 'warning');
+        return;
+      }
+
+      userLatLon = [lat, lng];
       placeMarker('start', lat, lng);
-      navMap.setView([lat, lng], 15);
+      updateUserMarker(lat, lng);
+      navMap.setView([lat, lng], 17); // Closer zoom for current location
       showToast('Start set to your location ✓', 'success');
+      
+      // Start continuous tracking
+      trackUserLocation();
     },
-    err => showToast('Could not get location: ' + err.message, 'error')
+    err => showToast('Could not get location: ' + err.message, 'error'),
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
   );
+}
+
+function trackUserLocation() {
+  navigator.geolocation.watchPosition(
+    pos => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      userLatLon = [lat, lng];
+      updateUserMarker(lat, lng);
+    },
+    err => console.warn('WatchPosition error:', err),
+    { enableHighAccuracy: true }
+  );
+}
+
+function updateUserMarker(lat, lng) {
+  if (!navMap) return;
+  if (userMarker) {
+    userMarker.setLatLng([lat, lng]);
+  } else {
+    userMarker = L.circleMarker([lat, lng], {
+      radius: 8,
+      fillColor: '#3b82f6',
+      color: '#fff',
+      weight: 2,
+      opacity: 1,
+      fillOpacity: 0.8
+    }).addTo(navMap).bindPopup('Your Location');
+  }
 }
 
 /* ── Load & render potholes ───────────────────────────────────────────────── */
@@ -302,24 +348,24 @@ async function findSafeRoute() {
 
 /* ── Draw route on map ────────────────────────────────────────────────────── */
 function drawRoute(data) {
-  const { route, safety, potholes_on_path, detected_potholes, avoided_potholes } = data;
+  const { route, safety, risk_score, potholes_on_path, detected_potholes, avoided_potholes } = data;
   if (!route || route.length < 2) {
     showToast('No route coordinates received', 'error');
     return;
   }
 
-  // 1. Determine Route Color
+  // 1. Determine Route Color & Risk Label
   let routeColor = '#22c55e'; // default safe (green)
-  let statusText = '✅ Safe Route (No potholes)';
+  let statusText = 'Safe (No potholes)';
   let badgeClass = 'safe-badge';
 
-  if (safety === 'unsafe') {
+  if (safety === 'unsafe' || risk_score > 70) {
     routeColor = '#ef4444'; // red
-    statusText = '❌ Unsafe Route (High-risk potholes)';
+    statusText = 'High Risk (Danger)';
     badgeClass = 'unsafe-badge';
-  } else if (safety === 'moderate') {
+  } else if (safety === 'moderate' || (risk_score > 0 && risk_score <= 70)) {
     routeColor = '#f59e0b'; // orange
-    statusText = '⚠️ Moderate Route (Small potholes present)';
+    statusText = 'Moderate Risk (Few potholes)';
     badgeClass = 'moderate-badge';
   }
 
@@ -358,6 +404,13 @@ function drawRoute(data) {
   safetyEl.textContent = statusText;
   safetyEl.className   = `status-value ${badgeClass}`;
   
+  // Update Risk Score display
+  const riskValEl = document.getElementById('riskValue');
+  if (riskValEl) {
+    riskValEl.textContent = `${risk_score}%`;
+    riskValEl.style.color = routeColor;
+  }
+
   document.getElementById('potholesOnPath').textContent = potholes_on_path;
   document.getElementById('avoidedCount').textContent    = avoided_potholes;
 
@@ -389,12 +442,12 @@ function drawRoute(data) {
   const banner = document.getElementById('routeBanner');
   banner.style.display = 'block';
   banner.style.color = routeColor;
-  banner.innerHTML = `<i class="fa-solid ${safety === 'safe' ? 'fa-shield-check' : 'fa-triangle-exclamation'}"></i> ${statusText}`;
+  banner.innerHTML = `<i class="fa-solid ${safety === 'safe' ? 'fa-shield-check' : 'fa-triangle-exclamation'}"></i> ${statusText} — Risk: ${risk_score}%`;
 
   // Toast
   if (safety === 'safe') showToast('✅ Safe route found!', 'success');
-  else if (safety === 'moderate') showToast('⚠️ Moderate route: hazards detected', 'warning');
-  else showToast('❌ Unsafe route: high-risk hazards detected', 'error');
+  else if (safety === 'moderate') showToast(`⚠️ Moderate route: Risk ${risk_score}%`, 'warning');
+  else showToast(`❌ Unsafe route: Risk ${risk_score}%`, 'error');
 }
 
 /* ── Clear existing routes ────────────────────────────────────────────────── */
@@ -422,10 +475,60 @@ function handleManualInput(type) {
   }
 }
 
+/* ── Nearby Notifications ─────────────────────────────────────────────────── */
+async function checkNearbyPotholes() {
+  if (!userLatLon) return;
+
+  try {
+    const res = await fetch(`/api/nearby-potholes?lat=${userLatLon[0]}&lon=${userLatLon[1]}`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    if (data.potholes && data.potholes.length > 0) {
+      const topPothole = data.potholes[0];
+      if (topPothole.id !== lastNotifiedId) {
+        lastNotifiedId = topPothole.id;
+        showNearbyNotification(topPothole);
+      }
+    }
+    
+    // Handle Admin Alerts
+    if (data.admin_alerts && data.admin_alerts.length > 0) {
+      data.admin_alerts.forEach(alert => {
+         showToast(alert.message, 'error', 10000);
+      });
+    }
+  } catch (e) {
+    console.warn('Nearby fetch failed:', e);
+  }
+}
+
+function showNearbyNotification(pothole) {
+  const msg = `⚠️ New pothole detected nearby! (${pothole.distance}m)`;
+  showToast(msg, 'warning', 5000);
+  
+  // Highlight on map if visible
+  L.circle([pothole.latitude, pothole.longitude], {
+    radius: 100,
+    color: '#f59e0b',
+    fillOpacity: 0.3,
+    weight: 3
+  }).addTo(navMap).bindPopup('Nearby Hazard!').openPopup();
+  
+  // Play sound if requested
+  try {
+    const audio = new Audio('/static/sounds/alert.mp3');
+    audio.play();
+  } catch(e) {}
+}
+
 /* ── Boot ─────────────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   initNavMap();
   setClickMode('start');   // default mode = place start marker
+
+  // Start nearby checking
+  notifyTimer = setInterval(checkNearbyPotholes, 10000);
 
   // Add listeners for manual input
   document.getElementById('startInput').addEventListener('blur', () => handleManualInput('start'));

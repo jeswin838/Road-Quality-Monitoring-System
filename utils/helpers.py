@@ -37,8 +37,25 @@ def is_duplicate(supabase, lat: float, lon: float, threshold_m: float = 50.0):
 
 
 def filter_by_confidence(records: list, threshold: float = 0.5) -> list:
-    """Remove records whose confidence is below threshold."""
-    return [r for r in records if (r.get("confidence") or 0) >= threshold]
+    """
+    Remove records whose confidence is below threshold.
+    Manual reports (without confidence field) are always kept (treated as 1.0).
+    """
+    return [r for r in records if r.get("confidence") is None or float(r.get("confidence")) >= threshold]
+
+
+def calculate_risk_score(severity, report_count):
+    """
+    Calculates a risk score based on severity and report count.
+    Distinct values to allow cumulative calculation.
+    """
+    severity_map = {"low": 10, "medium": 25, "high": 45}
+    sev_val = severity_map.get(str(severity).lower(), 25)
+    
+    # Reports add extra danger (capped)
+    report_bonus = min(20, int(report_count or 0) * 3)
+    
+    return sev_val + report_bonus
 
 
 def allowed_file(filename: str, allowed: set) -> bool:

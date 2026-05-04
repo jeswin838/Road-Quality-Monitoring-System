@@ -92,6 +92,57 @@
   .reports-grid { grid-template-columns: 1fr; }
   .reports-container { padding: 16px !important; }
 }
+
+/* Pagination Styling */
+.pagination {
+  margin-top: 32px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+}
+
+.page-btn {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  min-width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.page-btn:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+.page-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+@media (max-width: 500px) {
+  .hide-mobile { display: none; }
+  .pagination { gap: 6px; }
+  .page-btn { min-width: 36px; height: 36px; border-radius: 8px; }
+}
 </style>
 {% endblock %}
 
@@ -231,13 +282,39 @@ function renderGrid() {
 
     // Pagination
     const totalPages = Math.ceil(allReports.length / pageSize);
-    let pagHtml = '';
-    if (totalPages > 1) {
-        for (let i = 1; i <= totalPages; i++) {
-            pagHtml += `<button class="page-btn ${i===curPage?'active':''}" onclick="goPage(${i})">${i}</button>`;
-        }
+    const pagContainer = document.getElementById('reportsPagination');
+    
+    if (totalPages <= 1) {
+        pagContainer.innerHTML = '';
+        return;
     }
-    document.getElementById('reportsPagination').innerHTML = pagHtml;
+
+    let pagHtml = `
+      <button class="page-btn" ${curPage === 1 ? 'disabled' : ''} onclick="goPage(${curPage - 1})">
+        <i class="fa-solid fa-chevron-left"></i> <span class="hide-mobile" style="margin-left:8px">Previous</span>
+      </button>
+    `;
+
+    // Show limited pages if there are many
+    const maxVisible = 5;
+    let startPage = Math.max(1, curPage - Math.floor(maxVisible / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    
+    if (endPage - startPage + 1 < maxVisible) {
+      startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+        pagHtml += `<button class="page-btn ${i === curPage ? 'active' : ''}" onclick="goPage(${i})">${i}</button>`;
+    }
+
+    pagHtml += `
+      <button class="page-btn" ${curPage === totalPages ? 'disabled' : ''} onclick="goPage(${curPage + 1})">
+        <span class="hide-mobile" style="margin-right:8px">Next</span> <i class="fa-solid fa-chevron-right"></i>
+      </button>
+    `;
+
+    pagContainer.innerHTML = pagHtml;
 }
 
 function goPage(n) {

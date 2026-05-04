@@ -4,11 +4,24 @@
 
 {% block head %}
 <style>
-.dashboard-grid { display: grid; grid-template-columns: 1fr 380px; gap: 16px; height: calc(100vh - 80px); }
-.map-panel { position: relative; border-radius: 16px; overflow: hidden; min-height: 400px; }
+.dashboard-grid { 
+  display: grid; 
+  grid-template-columns: 1fr 420px; 
+  gap: 20px; 
+  height: calc(100vh - 100px); 
+  margin-top: 10px;
+}
+.map-panel { position: relative; border-radius: 20px; overflow: hidden; min-height: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
 #map { width: 100%; height: 100%; min-height: 400px; }
-.right-panel { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; padding-right: 4px; }
-.map-filters { background: var(--card-bg); border-radius: 12px; padding: 14px; border: 1px solid var(--border); }
+.right-panel { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 16px; 
+  overflow-y: auto; 
+  padding-right: 8px; 
+  scrollbar-width: thin;
+}
+.map-filters { background: var(--card-bg); border-radius: 16px; padding: 18px; border: 1px solid var(--border); }
 .map-filters h4 { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
 .filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .filter-chip { padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border); background: transparent; color: var(--text); font-size: 0.78rem; cursor: pointer; transition: all .2s; }
@@ -22,9 +35,15 @@
 
 @media (max-width: 1024px) {
   .dashboard-grid { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column; }
-  .map-panel { height: 450px; flex-shrink: 0; }
-  .right-panel { overflow-y: visible; }
+  .map-panel { height: 500px; flex-shrink: 0; }
+  .right-panel { overflow-y: visible; padding-right: 0; }
 }
+
+/* Premium Scrollbar for Right Panel */
+.right-panel::-webkit-scrollbar { width: 5px; }
+.right-panel::-webkit-scrollbar-track { background: transparent; }
+.right-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+.right-panel::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 </style>
 {% endblock %}
 
@@ -57,13 +76,19 @@
     <!-- Overlay controls -->
     <div class="map-overlay-controls">
       <button class="map-ctrl-btn active" id="btnClusters" onclick="toggleClusters()"><i class="fa-solid fa-layer-group"></i> Clusters</button>
-      <button class="map-ctrl-btn" id="btnHeatmap" onclick="toggleHeatmap()"><i class="fa-solid fa-fire"></i> Heatmap</button>
       <button class="map-ctrl-btn" onclick="locateMe()"><i class="fa-solid fa-location-crosshairs"></i> My Location</button>
     </div>
   </div>
 
   <!-- RIGHT PANEL -->
   <div class="right-panel">
+    <!-- Emergency Alerts (Hidden by default) -->
+    <div id="adminEmergencyAlert" style="display:none; margin-bottom:4px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:20px; padding:20px; backdrop-filter: blur(12px); box-shadow: 0 8px 32px rgba(239,68,68,0.15);">
+        <h4 style="color:#ef4444; font-size:0.9rem; font-weight:800; display:flex; align-items:center; gap:10px; margin-bottom:12px; letter-spacing: 0.5px">
+            <i class="fa-solid fa-triangle-exclamation fa-beat"></i> CRITICAL HAZARDS
+        </h4>
+        <div id="emergencyAlertList" style="max-height: 220px; overflow-y: auto; font-size:0.8rem; color:var(--text); display:flex; flex-direction:column; gap:10px; padding-right:6px"></div>
+    </div>
     <!-- Map filters -->
     <div class="map-filters glass-card">
       <h4>Map Filters</h4>
@@ -99,23 +124,23 @@
     </div>
 
     <!-- Live Alert Panel -->
-    <div class="glass-card" style="flex:1;overflow:hidden;display:flex;flex-direction:column;padding:16px;margin-bottom:14px">
-      <div class="card-header" style="margin-bottom:10px">
-        <h4 style="font-size:.9rem;font-weight:600"><i class="fa-solid fa-bolt" style="color:#f59e0b"></i> Live Alerts</h4>
-        <span class="badge badge-warning" id="alertCount">0</span>
+    <div class="glass-card" style="flex: 1.2; min-height: 200px; overflow:hidden; display:flex; flex-direction:column; padding:18px;">
+      <div class="card-header" style="margin-bottom:14px">
+        <h4 style="font-size:.95rem;font-weight:700"><i class="fa-solid fa-bolt" style="color:#f59e0b"></i> Live System Alerts</h4>
+        <span class="badge badge-warning" id="alertCount" style="padding: 4px 10px; border-radius: 20px">0</span>
       </div>
-      <div id="liveAlerts" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px;"></div>
+      <div id="liveAlerts" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:10px; padding-right:4px"></div>
     </div>
 
     <!-- User Reports Panel (Admin Only) -->
     {% if session.get('role') == 'admin' %}
-    <div class="glass-card" style="height:280px;overflow:hidden;display:flex;flex-direction:column;padding:16px;">
-      <div class="card-header" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center">
-        <h4 style="font-size:.9rem;font-weight:600"><i class="fa-solid fa-clipboard-list" style="color:var(--accent)"></i> User Submissions</h4>
-        <a href="{{ url_for('pages.user_reports') }}" style="font-size:0.7rem; color:var(--accent); text-decoration:none">View All</a>
+    <div class="glass-card" style="flex: 1; min-height: 200px; overflow:hidden; display:flex; flex-direction:column; padding:18px;">
+      <div class="card-header" style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center">
+        <h4 style="font-size:.95rem;font-weight:700"><i class="fa-solid fa-clipboard-list" style="color:var(--accent)"></i> Citizen Submissions</h4>
+        <a href="{{ url_for('pages.user_reports') }}" class="btn-text" style="font-size:0.75rem; font-weight:600; color:var(--accent); text-decoration:none">View Full List <i class="fa-solid fa-arrow-right"></i></a>
       </div>
-      <div id="dashboardUserReports" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px;">
-        <div style="text-align:center; padding:20px; color:var(--muted); font-size:0.8rem">Loading reports...</div>
+      <div id="dashboardUserReports" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:10px; padding-right:4px">
+        <div style="text-align:center; padding:30px; color:var(--muted); font-size:0.85rem">Loading latest reports...</div>
       </div>
     </div>
     {% endif %}

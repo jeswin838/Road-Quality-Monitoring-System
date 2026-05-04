@@ -46,29 +46,49 @@ def get_potholes():
             pass
 
         # 1. Fetch AI Potholes
-        p_query = supabase.table("potholes").select("*").eq("pothole", True)
-        if severity: p_query = p_query.ilike("severity", severity)
-        if date_from: p_query = p_query.gte("created_at", f"{date_from}T00:00:00")
-        if date_to: p_query = p_query.lte("created_at", f"{date_to}T23:59:59")
-        if ptype: p_query = p_query.ilike("type", ptype)
-        
-        p_res = p_query.order("created_at", desc=(sort_dir == "desc")).limit(500).execute()
-        ai_potholes = p_res.data or []
+        ai_potholes = []
+        if not ptype or ptype.lower() in ["pothole", "crack"]:
+            p_query = supabase.table("potholes").select("*").eq("pothole", True)
+            if severity: p_query = p_query.ilike("severity", severity)
+            if date_from: p_query = p_query.gte("created_at", f"{date_from}T00:00:00")
+            if date_to: p_query = p_query.lte("created_at", f"{date_to}T23:59:59")
+            if ptype: p_query = p_query.ilike("type", ptype)
+            
+            p_res = p_query.order("created_at", desc=(sort_dir == "desc")).limit(500).execute()
+            ai_potholes = p_res.data or []
+            for p in ai_potholes:
+                p["source"] = "AI"
 
-        # 2. Fetch Approved User Reports
-        u_query = supabase.table("user_reports").select("*").eq("status", "approved")
-        if date_from: u_query = u_query.gte("created_at", f"{date_from}T00:00:00")
-        if date_to: u_query = u_query.lte("created_at", f"{date_to}T23:59:59")
-        
-        u_res = u_query.order("created_at", desc=(sort_dir == "desc")).limit(200).execute()
-        user_rows = u_res.data or []
+        # 2. Fetch User Reports
+        user_rows = []
+        if not ptype or ptype == "Citizen Report":
+            u_query = supabase.table("user_reports").select("*")
+            
+            # If status is provided, filter user reports too. Otherwise, default to 'approved' 
+            # UNLESS 'all_reports' is explicitly requested (used for Image Logs).
+            all_reports = request.args.get("all_reports", "false").lower() == "true"
+            
+            if status:
+                u_query = u_query.eq("status", status.lower())
+            elif not all_reports:
+                u_query = u_query.eq("status", "approved")
+                
+            if date_from: u_query = u_query.gte("created_at", f"{date_from}T00:00:00")
+            if date_to: u_query = u_query.lte("created_at", f"{date_to}T23:59:59")
+            
+            u_res = u_query.order("created_at", desc=(sort_dir == "desc")).limit(200).execute()
+            user_rows = u_res.data or []
 
         # Map user reports to pothole format
         for ur in user_rows:
             ur["image_url"] = ur.get("media_url")
-            ur["severity"]  = "medium"
-            ur["type"]      = "Citizen Report"
+            ur["severity"]  = ur.get("severity") or "medium"
+            # Normalize type for unified display: keep "image/video" but prefix with "Citizen"
+            orig_type = ur.get("type", "image")
+            ur["type"]      = f"Citizen {orig_type.capitalize()}"
             ur["source"]    = "Citizen"
+            # Keep original status for display in logs
+            ur["report_status"] = ur.get("status", "pending")
 
         # Combine
         rows = ai_potholes + user_rows
@@ -148,18 +168,22 @@ def get_potholes():
 
         final_rows = []
         for r in processed_rows:
-
-            r_status = assigns.get(r["id"], "Pending")
+            # 1. Status Check
+            r_status = assigns.get(r["id"], "Pending") if r.get("source") != "Citizen" else r.get("report_status", "Pending")
             r["status"] = r_status
             
-            # Apply python-side status filter
             if status and r_status.lower() != status.lower():
                 continue
 
-            # Normalize image URLs
+            # 2. Severity Check (Important for unified results)
+            r_severity = (r.get("severity") or "medium").lower()
+            if severity and r_severity != severity.lower():
+                continue
+
+            # 3. Normalize image URLs
             url = r.get("image_url")
             if url and not url.startswith("http") and not url.startswith("/static"):
-                r["image_url"] = f"{Config.SUPABASE_URL}/storage/v1/object/public/potholes/{url}"
+                r["image_url"] = f"{Config.SUPABASE_URL}/storage/v1/object/public/pothole-images/{url}"
             
             final_rows.append(r)
 
@@ -958,6 +982,7 @@ def safe_route():
                 "lat": float(p["latitude"]),
                 "lon": float(p["longitude"]),
                 "severity": (p.get("severity") or "medium").lower(),
+                "report_count": p.get("report_count") or 1,
                 "dist": dist
             })
 
@@ -970,39 +995,100 @@ def safe_route():
         for g in detected_on_route:
             # If within 50m of an already detected location, merge/ignore
             if haversine(p["lat"], p["lon"], g["lat"], g["lon"]) < 50.0:
-                # Keep the one closest to the route or highest severity
+                # Keep highest severity and max report count
                 if p["severity"] == "high" and g["severity"] != "high":
                     g["severity"] = "high"
+                g["report_count"] = max(g.get("report_count", 1), p.get("report_count", 1))
                 found = True
                 break
         if not found:
             detected_on_route.append(p)
             encountered_severities.add(p["severity"])
 
-    # 6. Safety classification
+    # 6. Safety classification based on Risk Score
+    total_risk = 0
+    max_risk_on_route = 0
+    from utils.helpers import calculate_risk_score
+    
+    for p in detected_on_route:
+        # Get actual report_count if available, else 1
+        p_count = p.get("report_count", 1)
+        p_risk = calculate_risk_score(p["severity"], p_count)
+        
+        total_risk += p_risk
+
+    # Cumulative risk percentage (capped at 100)
+    # A single High pothole is ~48%, 3 High potholes is ~100%
+    risk_percentage = 0
+    if detected_on_route:
+        risk_percentage = min(100, int(total_risk))
+    
     safety = "safe"
-    if "high" in encountered_severities:
+    if risk_percentage > 70:
         safety = "unsafe"
-    elif "medium" in encountered_severities or "low" in encountered_severities:
+    elif risk_percentage > 0:
         safety = "moderate"
-    else:
-        safety = "safe"
 
     # Debug Logging
     print(f"[NAV] Route Points: {len(route_latlon)}")
     print(f"[NAV] Nearby Potholes: {len(proximate_potholes)}")
     print(f"[NAV] Detected on route: {len(detected_on_route)}")
-    if detected_on_route:
-        print(f"[NAV] First dist: {detected_on_route[0]['dist']:.2f}m")
+    print(f"[NAV] Risk Score: {risk_percentage}%")
 
     return jsonify({
         "route": route_latlon,
         "safety": safety,
+        "risk_score": risk_percentage,
         "potholes_on_path": len(detected_on_route),
         "detected_potholes": detected_on_route,
         "avoided_potholes": len(high_potholes) if safety != "unsafe" else 0
     })
 
+
+# -----------------------------------------------------------------------------
+# GET /api/nearby-potholes
+# -----------------------------------------------------------------------------
+@api_bp.route("/nearby-potholes", methods=["GET"])
+def get_nearby_potholes():
+    from utils.helpers import haversine, calculate_risk_score
+    lat = request.args.get("lat", type=float)
+    lon = request.args.get("lon", type=float)
+    radius = request.args.get("radius", type=float, default=500.0)
+
+    if lat is None or lon is None:
+        return jsonify({"error": "lat and lon required"}), 400
+
+    supabase = get_supabase()
+    # Fetch all active potholes
+    p_res = supabase.table("potholes").select("*").eq("pothole", True).execute()
+    u_res = supabase.table("user_reports").select("*").in_("status", ["approved", "pending"]).execute()
+    
+    all_p = (p_res.data or []) + (u_res.data or [])
+    
+    nearby = []
+    for p in all_p:
+        p_lat, p_lon = float(p["latitude"]), float(p["longitude"])
+        dist = haversine(lat, lon, p_lat, p_lon)
+        if dist <= radius:
+            p["distance"] = round(dist, 1)
+            p["risk_score"] = calculate_risk_score(p.get("severity", "low"), p.get("report_count", 1))
+            nearby.append(p)
+
+    # Sort by risk score (descending) and then distance
+    nearby.sort(key=lambda x: (-x["risk_score"], x["distance"]))
+    
+    # 3. Normalize results
+    for p in nearby:
+        url = p.get("image_url") or p.get("media_url")
+        if url and not url.startswith("http") and not url.startswith("/static"):
+            p["image_url"] = f"{Config.SUPABASE_URL}/storage/v1/object/public/pothole-images/{url}"
+        else:
+            p["image_url"] = url
+
+    return jsonify({
+        "potholes": nearby[:10],
+        "admin_alerts": admin_alerts
+    })
 
 # -----------------------------------------------------------------------------
 # GET /api/alerts — Unified AI + User Reports Grouped by Location
@@ -1121,7 +1207,7 @@ def get_alerts_unified():
         # Normalize image URLs
         def normalize(url):
             if url and not url.startswith("http") and not url.startswith("/static"):
-                 return f"{Config.SUPABASE_URL}/storage/v1/object/public/potholes/{url}"
+                 return f"{Config.SUPABASE_URL}/storage/v1/object/public/pothole-images/{url}"
             return url
             
         g["image"] = normalize(g["image"])
