@@ -6,7 +6,14 @@ import cv2
 import numpy as np
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
-from ultralytics import YOLO
+
+# Production-safe YOLO import (for Render memory limits)
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
+    print("[AI] ⚠️ YOLO (ultralytics) not installed. Running in sensor-only mode.")
+
 from config import Config
 from utils.helpers import haversine, is_duplicate
 
@@ -18,17 +25,25 @@ model = None
 
 def load_model():
     global model
+    
+    if YOLO is None:
+        print("[AI] ⚠️ YOLO disabled in production (import failed).")
+        return None
+
     if model is None:
         print("🚀 Loading YOLO model...")
+        # Path logic: look for best.pt in the root directory
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'best.pt')
+        
         if not os.path.exists(model_path):
-            print("❌ MODEL NOT FOUND:", model_path)
+            print(f"❌ MODEL NOT FOUND at {model_path}. AI disabled.")
             return None
+            
         try:
             model = YOLO(model_path)
-            print("✅ Model loaded")
+            print("✅ YOLO Model loaded successfully")
         except Exception as e:
-            print(f"❌ Error loading YOLO: {e}")
+            print(f"❌ Error loading YOLO: {e}. Falling back to sensor-only mode.")
             return None
     return model
 
@@ -176,6 +191,10 @@ def run_inference(m, img: np.ndarray) -> tuple:
     """Run YOLO on a single image. Returns (results, detections_list)."""
     detections = []
     results = None
+    
+    if m is None:
+        return None, []
+
     try:
         start = time.time()
         results = m.predict(source=img, conf=0.4, imgsz=640, verbose=False)
@@ -283,8 +302,8 @@ def analyze():
 
         m = load_model()
         if m is None:
-            return jsonify({"error": "Model not loaded"}), 500
-
+            print("[FUSION] Running sensor-only mode (YOLO unavailable)")
+        
         # ----- 1. Extract Inputs -----
         files = request.files.getlist("image")   # Support multi-frame upload
         if not files:
@@ -323,8 +342,13 @@ def analyze():
             img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             if img is None:
                 continue
-            results, detections = run_inference(m, img)
-            frames.append((results, detections, img))
+            
+            if m:
+                results, detections = run_inference(m, img)
+                frames.append((results, detections, img))
+            else:
+                # Sensor-only: No results/detections
+                frames.append((None, [], img))
 
         if not frames:
             return jsonify({"error": "All frames invalid"}), 400
@@ -438,7 +462,7 @@ def user_report():
     from app import supabase
     m = load_model()
     if m is None:
-        return jsonify({"error": "Model not loaded"}), 500
+        print("[AI] User report validation: YOLO unavailable, skipping AI verification")
 
     file = request.files.get("image")
     lat  = request.form.get("lat") or request.form.get("latitude")
@@ -467,43 +491,54 @@ def user_report():
     img_area = w * h
 
     # AI Inference
-    results = m.predict(source=img, conf=0.3, imgsz=640, verbose=False)
-
+    results = None
     detections = []
     pothole_detected = False
+    
+    if m:
+        results = m.predict(source=img, conf=0.3, imgsz=640, verbose=False)
+        # Parse results if they exist
+        if results:
+            for r in results:
+                if r.boxes is None: continue
+                for box in r.boxes:
+                    cls  = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    x1, y1, x2, y2 = map(float, box.xyxy[0])
+                    bbox_area = (x2 - x1) * (y2 - y1)
+                    ratio = (bbox_area / img_area) * 100
+                    
+                    severity = "high" if ratio > 5.0 else ("medium" if ratio > 2.0 else "low")
+                    class_name = m.names[cls].lower()
+                    
+                    if class_name in ["pothole", "crack"] and conf > 0.5:
+                        pothole_detected = True
 
-    for r in results:
-        if r.boxes is None:
-            continue
-        for box in r.boxes:
-            cls  = int(box.cls[0])
-            conf = float(box.conf[0])
-            x1, y1, x2, y2 = map(float, box.xyxy[0])
-
-            bbox_area = (x2 - x1) * (y2 - y1)
-            ratio = (bbox_area / img_area) * 100
-            if ratio > 5.0:   severity = "high"
-            elif ratio > 2.0: severity = "medium"
-            else:             severity = "low"
-
-            class_name = m.names[cls].lower()
-            if class_name in ["pothole", "crack"] and conf > 0.5:
-                pothole_detected = True
-
-            detections.append({
-                "type":       class_name,
-                "confidence": round(conf, 2),
-                "severity":   severity,
-                "box":        [x1, y1, x2, y2]
-            })
+                    detections.append({
+                        "type":       class_name,
+                        "confidence": round(conf, 2),
+                        "severity":   severity,
+                        "box":        [x1, y1, x2, y2]
+                    })
+    else:
+        # No model? Default to "Unverified" but keep report
+        print("[AI] Skipping verification loop")
 
     status = "Verified" if pothole_detected else "Rejected (Not Pothole)"
 
     # Save Annotated Image
-    annotated  = results[0].plot()
-    _, buffer  = cv2.imencode(".jpg", annotated)
-    base_name  = f"user_{status.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    filename   = upload_with_retry(buffer.tobytes(), base_name)
+    try:
+        if results and len(results) > 0:
+            annotated = results[0].plot()
+        else:
+            annotated = img # Raw image if no AI
+            
+        _, buffer  = cv2.imencode(".jpg", annotated)
+        base_name  = f"user_{status.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        filename   = upload_with_retry(buffer.tobytes(), base_name)
+    except Exception as e:
+        print(f"[AI] Image processing error: {e}")
+        return jsonify({"error": "processing_failed"}), 500
     if not filename:
         return jsonify({"error": "upload_failed"}), 500
 
