@@ -6,15 +6,9 @@ import cv2
 import numpy as np
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
+from ultralytics import YOLO
 from config import Config
 from utils.helpers import haversine, is_duplicate
-
-# Production-safe YOLO import
-try:
-    from ultralytics import YOLO
-except Exception as e:
-    print(f"⚠️ [SYSTEM] YOLO dependencies missing or failed to import: {e}")
-    YOLO = None
 
 # ================= INIT =================
 ai_bp = Blueprint("ai", __name__)
@@ -24,25 +18,18 @@ model = None
 
 def load_model():
     global model
-    
-    if YOLO is None:
-        print("⚠️ [AI] YOLO disabled in production (import failed). Running sensor-only mode.")
-        return None
-
     if model is None:
+        print("🚀 Loading YOLO model...")
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'best.pt')
         if not os.path.exists(model_path):
-            print(f"⚠️ [AI] Model file not found at {model_path}. Running sensor-only mode.")
+            print("❌ MODEL NOT FOUND:", model_path)
             return None
-            
         try:
-            print("🚀 Loading YOLO model...")
             model = YOLO(model_path)
-            print("✅ Model loaded successfully")
+            print("✅ Model loaded")
         except Exception as e:
-            print(f"❌ [AI] Error initializing YOLO: {e}")
-            model = None
-            
+            print(f"❌ Error loading YOLO: {e}")
+            return None
     return model
 
 
@@ -189,9 +176,6 @@ def run_inference(m, img: np.ndarray) -> tuple:
     """Run YOLO on a single image. Returns (results, detections_list)."""
     detections = []
     results = None
-    if m is None:
-        return None, []
-        
     try:
         start = time.time()
         results = m.predict(source=img, conf=0.4, imgsz=640, verbose=False)
@@ -223,9 +207,6 @@ def select_best_frame(frames: list) -> tuple:
     pick the frame with the highest (confidence * max_dim) score.
     Returns (results, detections, img) of the best frame.
     """
-    if not frames:
-        return None, [], None
-        
     best_score = -1
     best = frames[0]
     for frame in frames:
@@ -267,8 +248,8 @@ def decide_severity(diff: float, sensor: dict, detections: list) -> str:
         else:
             return "ignored"
 
-    # --- CASE 2: AI FAILS (or Disabled) ---
-    print("[AI] No detection (or AI disabled)")
+    # --- CASE 2: AI FAILS ---
+    print("[AI] No detection")
     if diff >= 45 and sensor["vib"] > 0:
         print("[FUSION] Sensor fallback → LOW")
         return "low"
@@ -281,7 +262,14 @@ def decide_severity(diff: float, sensor: dict, detections: list) -> str:
 def analyze():
     """
     Main fusion pipeline:
-    Adaptive Mode: Works with or without YOLO.
+    1. Validate inputs
+    2. Load sensor state
+    3. Classify spike shape
+    4. Run YOLO inference on all submitted frames
+    5. Select best frame
+    6. Decide severity (sensor authority)
+    7. Upload annotated image
+    8. Persist (insert or update duplicate)
     """
     global processing
     if processing:
@@ -293,10 +281,9 @@ def analyze():
         from app import supabase
         from utils.helpers import is_duplicate
 
-        # Lazy load model (safe)
         m = load_model()
         if m is None:
-            print("⚠️ [FUSION] Running sensor-only mode (AI model unavailable)")
+            return jsonify({"error": "Model not loaded"}), 500
 
         # ----- 1. Extract Inputs -----
         files = request.files.getlist("image")   # Support multi-frame upload
@@ -326,6 +313,7 @@ def analyze():
         if spike_class == "speed_breaker":
             print("[FUSION] Speed breaker spike — ignoring")
             return jsonify({"status": "ignored", "reason": "speed_breaker"})
+        # Unknown (spike_ms=0) is allowed through — don't block real detections
 
         # ----- 4. Decode & Infer All Frames -----
         frames = []
@@ -335,9 +323,7 @@ def analyze():
             img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             if img is None:
                 continue
-            
-            # AI Inference (only if model loaded)
-            results, detections = run_inference(m, img) if m else (None, [])
+            results, detections = run_inference(m, img)
             frames.append((results, detections, img))
 
         if not frames:
@@ -345,10 +331,7 @@ def analyze():
 
         # ----- 5. Best Frame Selection -----
         best_results, best_detections, best_img = select_best_frame(frames)
-        if m:
-            print(f"[AI] Best frame: {len(best_detections)} detection(s)")
-        else:
-            print("[AI] Skipping best frame selection (Sensor-only mode)")
+        print(f"[AI] Best frame: {len(best_detections)} detection(s)")
 
         # ----- 6. Decision Logic -----
         decision = decide_severity(diff, sensor, best_detections)
@@ -382,7 +365,7 @@ def analyze():
             if best_results is not None:
                 annotated = best_results[0].plot()
             else:
-                annotated = best_img  # Raw frame if no AI results
+                annotated = best_img  # Raw frame if no results
             _, buffer = cv2.imencode('.jpg', annotated)
             base_name = f"fusion_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
             filename  = upload_with_retry(buffer.tobytes(), base_name)
@@ -451,10 +434,12 @@ def analyze():
 # ================= USER REPORT ENDPOINT =================
 @ai_bp.route("/user-report", methods=["POST"])
 def user_report():
-    """Manual User Report. Runs AI validation if available, else marks as pending."""
+    """Manual User Report. Runs AI validation, sets Verified/Rejected status, and saves to DB."""
     from app import supabase
     m = load_model()
-    
+    if m is None:
+        return jsonify({"error": "Model not loaded"}), 500
+
     file = request.files.get("image")
     lat  = request.form.get("lat") or request.form.get("latitude")
     lon  = request.form.get("lon") or request.form.get("longitude")
@@ -481,81 +466,66 @@ def user_report():
     h, w, _ = img.shape
     img_area = w * h
 
-    # AI Inference (if available)
+    # AI Inference
+    results = m.predict(source=img, conf=0.3, imgsz=640, verbose=False)
+
     detections = []
     pothole_detected = False
-    results = None
 
-    if m:
-        try:
-            results = m.predict(source=img, conf=0.3, imgsz=640, verbose=False)
-            for r in results:
-                if r.boxes is None: continue
-                for box in r.boxes:
-                    cls  = int(box.cls[0])
-                    conf = float(box.conf[0])
-                    x1, y1, x2, y2 = map(float, box.xyxy[0])
-                    bbox_area = (x2 - x1) * (y2 - y1)
-                    ratio = (bbox_area / img_area) * 100
-                    sev = "high" if ratio > 5.0 else ("medium" if ratio > 2.0 else "low")
-                    
-                    class_name = m.names[cls].lower()
-                    if class_name in ["pothole", "crack"] and conf > 0.5:
-                        pothole_detected = True
+    for r in results:
+        if r.boxes is None:
+            continue
+        for box in r.boxes:
+            cls  = int(box.cls[0])
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = map(float, box.xyxy[0])
 
-                    detections.append({
-                        "type":       class_name,
-                        "confidence": round(conf, 2),
-                        "severity":   sev,
-                        "box":        [x1, y1, x2, y2]
-                    })
-        except Exception as e:
-            print(f"[AI] User report inference failed: {e}")
+            bbox_area = (x2 - x1) * (y2 - y1)
+            ratio = (bbox_area / img_area) * 100
+            if ratio > 5.0:   severity = "high"
+            elif ratio > 2.0: severity = "medium"
+            else:             severity = "low"
 
-    # Fallback status if AI is disabled
-    if m:
-        status = "Verified" if pothole_detected else "Rejected (Not Pothole)"
-        report_status = "approved" if pothole_detected else "rejected"
-        desc = "AI Verified Pothole" if pothole_detected else "Rejected: Not a Pothole"
-    else:
-        status = "Pending Verification"
-        report_status = "pending"
-        desc = "Manual Report (AI disabled)"
+            class_name = m.names[cls].lower()
+            if class_name in ["pothole", "crack"] and conf > 0.5:
+                pothole_detected = True
 
-    # Save Annotated/Raw Image
-    try:
-        if results is not None:
-            annotated = results[0].plot()
-        else:
-            annotated = img
-        _, buffer = cv2.imencode(".jpg", annotated)
-        base_name = f"user_{report_status}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        filename  = upload_with_retry(buffer.tobytes(), base_name)
-        if not filename:
-            return jsonify({"error": "upload_failed"}), 500
-        image_url = f"{Config.SUPABASE_URL}/storage/v1/object/public/pothole-images/{filename}"
-    except Exception as e:
-        print(f"[AI] User report upload error: {e}")
+            detections.append({
+                "type":       class_name,
+                "confidence": round(conf, 2),
+                "severity":   severity,
+                "box":        [x1, y1, x2, y2]
+            })
+
+    status = "Verified" if pothole_detected else "Rejected (Not Pothole)"
+
+    # Save Annotated Image
+    annotated  = results[0].plot()
+    _, buffer  = cv2.imencode(".jpg", annotated)
+    base_name  = f"user_{status.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    filename   = upload_with_retry(buffer.tobytes(), base_name)
+    if not filename:
         return jsonify({"error": "upload_failed"}), 500
+
+    image_url = f"{Config.SUPABASE_URL}/storage/v1/object/public/pothole-images/{filename}"
 
     # Save to Database
     try:
+        report_status = "approved" if pothole_detected else "rejected"
         supabase.table("user_reports").insert({
             "latitude":    lat_f,
             "longitude":   lon_f,
             "media_url":   image_url,
             "type":        "image",
-            "description": desc,
+            "description": "AI Verified Pothole" if pothole_detected else "Rejected: Not a Pothole",
             "status":      report_status,
             "created_at":  datetime.now(timezone.utc).isoformat()
         }).execute()
 
-        # If verified or if manual (always add to potholes if manual and AI is off? 
-        # No, let's keep it in user_reports only if AI is off, or add as 'low' severity)
-        if pothole_detected or not m:
+        if pothole_detected:
             primary = next(
                 (d for d in detections if d["type"] in ["pothole", "crack"]),
-                {"severity": "low", "confidence": 0, "type": "manual" if not m else "none"}
+                {"severity": "low", "confidence": 0, "type": "none"}
             )
             supabase.table("potholes").insert({
                 "latitude":  lat_f,
