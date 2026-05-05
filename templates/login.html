@@ -34,6 +34,7 @@
       </div>
 
       <div id="authError" class="alert-error" style="display:none"></div>
+      <div id="authSuccess" class="alert-success" style="display:none"></div>
 
       <!-- Login Form -->
       <form id="loginForm" class="auth-form active">
@@ -82,46 +83,98 @@
 
     const showError = (msg) => {
       const err = document.getElementById('authError');
+      const succ = document.getElementById('authSuccess');
+      succ.style.display = 'none';
       err.textContent = msg;
       err.style.display = 'block';
+    };
+
+    const showSuccess = (msg) => {
+      const succ = document.getElementById('authSuccess');
+      const err = document.getElementById('authError');
+      err.style.display = 'none';
+      succ.textContent = msg;
+      succ.style.display = 'block';
     };
 
     // LOGIN
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = document.getElementById('lBtn');
+      const originalHtml = btn.innerHTML;
+      
       btn.disabled = true;
-      const res = await fetch('/api/login', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ email: document.getElementById('lEmail').value, password: document.getElementById('lPass').value })
-      });
-      const data = await res.json();
-      if(res.ok) window.location.href = '/';
-      else { showError(data.error); btn.disabled = false; }
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Signing in...';
+      document.getElementById('authError').style.display = 'none';
+
+      try {
+        const res = await fetch('/api/login', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ 
+            email: document.getElementById('lEmail').value, 
+            password: document.getElementById('lPass').value 
+          })
+        });
+        const data = await res.json();
+        
+        if(res.ok) {
+          showSuccess("Login successful! Redirecting...");
+          btn.innerHTML = '<i class="fa-solid fa-check"></i> Success';
+          setTimeout(() => { window.location.href = '/'; }, 600);
+        } else {
+          showError(data.error || "Invalid credentials");
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
+      } catch (err) {
+        showError("Network error. Please try again.");
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
     });
 
     // REGISTER
     document.getElementById('registerForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = document.getElementById('rBtn');
+      const originalHtml = btn.innerHTML;
+
       btn.disabled = true;
-      const res = await fetch('/api/register', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          name:     document.getElementById('rName').value,
-          email:    document.getElementById('rEmail').value,
-          password: document.getElementById('rPass').value
-        })
-      });
-      const data = await res.json();
-      if(res.ok) {
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating account...';
+      document.getElementById('authError').style.display = 'none';
+
+      try {
+        const res = await fetch('/api/register', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            name:     document.getElementById('rName').value,
+            email:    document.getElementById('rEmail').value,
+            password: document.getElementById('rPass').value
+          })
+        });
+        const data = await res.json();
+        
+        if(res.ok) {
+          showSuccess("Account created! Logging you in...");
+          btn.innerHTML = '<i class="fa-solid fa-check"></i> Welcome';
+          
           // Auto login after register
           await fetch('/api/login', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ email: document.getElementById('rEmail').value, password: document.getElementById('rPass').value })
           });
-          window.location.href = '/';
-      } else { showError(data.error); btn.disabled = false; }
+          
+          setTimeout(() => { window.location.href = '/'; }, 800);
+        } else {
+          showError(data.error || "Registration failed");
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
+      } catch (err) {
+        showError("Network error. Please try again.");
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
     });
   </script>
 </body>

@@ -13,6 +13,96 @@ def get_supabase():
     return supabase
 
 # -----------------------------------------------------------------------------
+# GET /api/location-reports?lat=...&lon=...
+# -----------------------------------------------------------------------------
+@api_bp.route("/location-reports", methods=["GET"], strict_slashes=False)
+def get_location_reports():
+    lat_val = request.args.get("lat")
+    lon_val = request.args.get("lon")
+
+    print(f"[API] location-reports request: lat={lat_val}, lon={lon_val}")
+
+    if not lat_val or not lon_val:
+        return jsonify({"error": "Latitude and Longitude are required"}), 400
+
+    supabase = get_supabase()
+    if not supabase:
+        print("[!] location-reports error: Supabase not connected")
+        return jsonify({"error": "Database connection lost"}), 500
+    
+    try:
+        try:
+            lat = float(lat_val)
+            lon = float(lon_val)
+        except ValueError:
+            return jsonify({"error": "Invalid coordinates format"}), 400
+            
+        # Use a small range (approx 10m) to handle float precision and grouping logic
+        EPSILON = 0.0001 
+        
+        # 1. Fetch AI Potholes
+        print(f"[DB] Querying potholes near {lat}, {lon} (±{EPSILON})")
+        p_res = supabase.table("potholes") \
+            .select("*") \
+            .gte("latitude", lat - EPSILON) \
+            .lte("latitude", lat + EPSILON) \
+            .gte("longitude", lon - EPSILON) \
+            .lte("longitude", lon + EPSILON) \
+            .execute()
+        
+        # 2. Fetch User Reports
+        u_res = supabase.table("user_reports") \
+            .select("*") \
+            .gte("latitude", lat - EPSILON) \
+            .lte("latitude", lat + EPSILON) \
+            .gte("longitude", lon - EPSILON) \
+            .lte("longitude", lon + EPSILON) \
+            .execute()
+            
+        combined = []
+        
+        # Mapping AI Potholes
+        p_data = getattr(p_res, 'data', []) or []
+        for p in p_data:
+            url = p.get("image_url")
+            if url and not url.startswith("http") and not url.startswith("/static"):
+                base_url = Config.SUPABASE_URL.rstrip('/')
+                url = f"{base_url}/storage/v1/object/public/pothole-images/{url}"
+                
+            combined.append({
+                "image": url,
+                "source": "AI",
+                "severity": p.get("severity", "unknown"),
+                "status": p.get("status", "unknown"),
+                "type": p.get("type", "pothole"),
+                "created_at": p.get("created_at") or ""
+            })
+            
+        # Mapping User Reports
+        u_data = getattr(u_res, 'data', []) or []
+        for u in u_data:
+            combined.append({
+                "image": u.get("media_url"),
+                "source": "Citizen",
+                "status": u.get("status", "pending"),
+                "type": u.get("type", "image"),
+                "description": u.get("description"),
+                "created_at": u.get("created_at") or ""
+            })
+            
+        # 3. Sort by most recent
+        combined.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+        
+        print(f"[API] location-reports success: found {len(combined)} items")
+        return jsonify(combined)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[!] location-reports Critical Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# -----------------------------------------------------------------------------
 # GET /api/potholes
 # -----------------------------------------------------------------------------
 @api_bp.route("/potholes", methods=["GET"])
@@ -1085,9 +1175,12 @@ def get_nearby_potholes():
         else:
             p["image_url"] = url
 
+    # 4. Extract critical alerts for the navigation sidebar
+    admin_alerts = [p for p in nearby if p.get("severity", "").lower() == "high"]
+
     return jsonify({
         "potholes": nearby[:10],
-        "admin_alerts": admin_alerts
+        "admin_alerts": admin_alerts[:5]
     })
 
 # -----------------------------------------------------------------------------
@@ -1098,6 +1191,13 @@ def get_nearby_potholes():
 def get_alerts_unified():
     supabase = get_supabase()
     from utils.helpers import human_time, haversine
+    from datetime import datetime
+
+    # Extract Filters
+    f_severity = request.args.get("severity", "").lower()
+    f_status   = request.args.get("status", "").lower()
+    f_date_from = request.args.get("date_from")
+    f_date_to   = request.args.get("date_to")
     
     # 1. Fetch AI Potholes (active/pothole=true) - Limit to most recent 500 for performance
     p_res = supabase.table("potholes").select("*").eq("pothole", True).order("created_at", desc=True).limit(500).execute()
@@ -1212,7 +1312,35 @@ def get_alerts_unified():
             
         g["image"] = normalize(g["image"])
         g["all_images"] = [normalize(url) for url in g["all_images"] if url]
-        
+
+    # 6. Apply Post-Grouping Filters
+    if f_severity or f_status or f_date_from or f_date_to:
+        filtered = []
+        for g in final_groups:
+            # Severity check
+            if f_severity and g["severity"].lower() != f_severity:
+                continue
+            
+            # Status check
+            if f_status and g["status"].lower() != f_status:
+                continue
+                
+            # Date check
+            g_ts = g.get("last_reported_at")
+            if g_ts:
+                # Assuming g_ts is ISO string, compare first 10 chars (YYYY-MM-DD)
+                g_date = g_ts[:10]
+                if f_date_from and g_date < f_date_from:
+                    continue
+                if f_date_to and g_date > f_date_to:
+                    continue
+            elif f_date_from or f_date_to:
+                # If date filters are set but record has no date, skip it
+                continue
+                
+            filtered.append(g)
+        final_groups = filtered
+            
     return jsonify(final_groups)
 
 
@@ -1331,6 +1459,11 @@ def report_action():
         elif action == "reject":
             supabase.table("user_reports").update({"status": "rejected"}).eq("id", rid).execute()
             
+        return jsonify({"message": f"Report {action}d successfully"})
+    except Exception as e:
+        return jsonify({"error": f"Action failed: {str(e)}"}), 500
+
+
         return jsonify({"message": f"Report {action}d successfully"})
     except Exception as e:
         return jsonify({"error": f"Action failed: {str(e)}"}), 500

@@ -36,6 +36,31 @@ def is_duplicate(supabase, lat: float, lon: float, threshold_m: float = 50.0):
     return None
 
 
+def count_nearby_potholes(supabase, lat: float, lon: float, radius_m: float = 5.0):
+    """
+    Counts potholes within radius_m using a bounding box filter (±0.0001 deg ~ 11m).
+    """
+    try:
+        # Bounding box for 5m (approx 0.00005)
+        res = supabase.table("potholes")\
+            .select("id, latitude, longitude")\
+            .eq("pothole", True)\
+            .gte("latitude", lat - 0.0001)\
+            .lte("latitude", lat + 0.0001)\
+            .gte("longitude", lon - 0.0001)\
+            .lte("longitude", lon + 0.0001)\
+            .execute()
+        
+        count = 0
+        for p in res.data:
+            if haversine(lat, lon, float(p["latitude"]), float(p["longitude"])) <= radius_m:
+                count += 1
+        return count
+    except Exception as e:
+        print(f"Count nearby error: {e}")
+        return 0
+
+
 def filter_by_confidence(records: list, threshold: float = 0.5) -> list:
     """
     Remove records whose confidence is below threshold.

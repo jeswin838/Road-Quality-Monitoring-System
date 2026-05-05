@@ -331,37 +331,58 @@ window.showReports = async function(lat, lon) {
   container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--muted)"><i class="fa-solid fa-spinner fa-spin"></i> Loading reports...</div>';
 
   try {
-    const res = await fetch('/api/user-reports');
-    const allReports = await res.json();
+    console.log(`[Reports] Fetching for lat=${lat}, lon=${lon}...`);
+    const res = await fetch(`/api/location-reports?lat=${lat}&lon=${lon}`);
     
-    // Filter by distance (approx 50m)
-    const nearby = allReports.filter(r => {
-      const d = haversine(lat, lon, parseFloat(r.latitude), parseFloat(r.longitude));
-      return d < 50.0;
-    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      console.error("[Reports] API Error:", errData);
+      throw new Error(errData.error || `Server error: ${res.status}`);
+    }
 
-    if (nearby.length === 0) {
+    const reports = await res.json();
+    console.log(`[Reports] Found ${reports?.length || 0} reports.`);
+    
+    if (!Array.isArray(reports) || reports.length === 0) {
       container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--muted)">No media reports found for this location.</div>';
       return;
     }
 
-    container.innerHTML = nearby.map(r => {
+    container.innerHTML = reports.map(r => {
       const isVideo = r.type === 'video';
+      const sourceColor = r.source === 'AI' ? 'var(--accent)' : '#3b82f6';
+      
+      // Fallback for missing images
+      const displayMedia = r.image || '/static/img/placeholder.jpg';
+      
       return `
-        <div class="report-tile" style="background:rgba(255,255,255,0.05); border-radius:10px; overflow:hidden; border:1px solid rgba(255,255,255,0.1)">
+        <div class="report-tile" style="background:rgba(255,255,255,0.05); border-radius:10px; overflow:hidden; border:1px solid rgba(255,255,255,0.1); position:relative">
+          <div style="position:absolute; top:8px; left:8px; background:${sourceColor}; color:#fff; font-size:9px; padding:2px 6px; border-radius:4px; font-weight:700; z-index:10; box-shadow:0 2px 4px rgba(0,0,0,0.3)">
+            ${r.source.toUpperCase()}
+          </div>
           ${isVideo 
-            ? `<video src="${r.media_url}" controls style="width:100%; height:140px; object-fit:cover"></video>` 
-            : `<img src="${r.media_url}" style="width:100%; height:140px; object-fit:cover" onclick="window.open('${r.media_url}', '_blank')">`}
+            ? `<video src="${displayMedia}" controls style="width:100%; height:140px; object-fit:cover"></video>` 
+            : `<img src="${displayMedia}" style="width:100%; height:140px; object-fit:cover; cursor:pointer" onclick="window.open('${displayMedia}', '_blank')" onerror="this.src='/static/img/placeholder.jpg'; this.onerror=null;">`}
           <div style="padding:10px; font-size:11px">
-            <div style="color:var(--muted); margin-bottom:4px">${new Date(r.created_at).toLocaleDateString()}</div>
-            <div style="color:var(--text); line-height:1.4">${r.description || 'Citizen report'}</div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px">
+              <span style="color:var(--muted)">${r.created_at ? new Date(r.created_at).toLocaleDateString() : 'Unknown date'}</span>
+              <span style="color:${r.status === 'Fixed' ? '#22c55e' : '#f59e0b'}">${r.status || 'Pending'}</span>
+            </div>
+            <div style="color:var(--text); line-height:1.4; height:32px; overflow:hidden; text-overflow:ellipsis">
+              ${r.description || (r.source === 'AI' ? `AI detected ${r.severity} severity hazard` : 'Citizen report')}
+            </div>
           </div>
         </div>
       `;
     }).join('');
 
   } catch (err) {
-    container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--danger)">Failed to load reports.</div>';
+    console.error("[Reports] Modal Error:", err);
+    container.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--danger)">
+      <i class="fa-solid fa-circle-exclamation fa-2x" style="margin-bottom:10px"></i><br>
+      Failed to load reports.<br>
+      <small style="color:var(--muted)">${err.message}</small>
+    </div>`;
   }
 };
 

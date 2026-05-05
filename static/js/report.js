@@ -101,26 +101,36 @@ async function handleSubmit() {
   if (!capturedBlob || !currentCoords) return;
 
   submitBtn.disabled = true;
-  submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Submitting...';
+  submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analyzing...';
 
   const formData = new FormData();
-  formData.append('media', capturedBlob, 'capture.jpg');
+  // Field name MUST be "image" for the /user-report endpoint
+  formData.append('image', capturedBlob, 'capture.jpg');
   formData.append('lat', currentCoords.lat);
   formData.append('lon', currentCoords.lon);
   formData.append('description', document.getElementById('descInput').value);
 
   try {
-    const res = await fetch('/api/report', {
+    const res = await fetch('/user-report', {
       method: 'POST',
       body: formData
     });
     const data = await res.json();
 
     if (res.ok) {
-      showToast("Report submitted successfully!", "success");
-      setTimeout(() => window.location.href = '/', 2000);
+      const status = data.status; // "Verified" or "Rejected (Not Pothole)"
+      const icon = data.pothole_detected ? "success" : "warning";
+      
+      showToast(`Report Status: ${status}`, icon);
+      
+      if (data.pothole_detected) {
+          setTimeout(() => window.location.href = '/', 3000);
+      } else {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Try Again';
+      }
     } else {
-      showToast(data.error || "Submission failed", "error");
+      showToast(data.error || "Inference failed", "error");
       submitBtn.disabled = false;
       submitBtn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Submit Report';
     }

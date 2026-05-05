@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Alerts — Pothole Monitor{% endblock %}
-{% block page_title %}Alert Management{% endblock %}
+{% block page_title %}Alert Management <span id="alertCount" class="badge badge-accent" style="font-size:0.9rem; margin-left:8px; vertical-align:middle">...</span>{% endblock %}
 
 {% block head %}
 <style>
@@ -101,14 +101,27 @@
 let allRows = [], curPage = 1, pageSize = 15;
 
 async function loadTable() {
+  const sev = document.getElementById('fSeverity').value;
+  const stat = document.getElementById('fStatus').value;
+  const dFrom = document.getElementById('fDateFrom').value;
+  const dTo = document.getElementById('fDateTo').value;
+
+  const tbody = document.getElementById('alertsBody');
+  tbody.innerHTML = `<tr><td colspan="9" class="text-center" style="padding:40px;color:var(--muted)">
+    <i class="fa-solid fa-spinner fa-spin"></i> Loading…
+  </td></tr>`;
+
   try {
-    const res  = await fetch('/api/alerts');
+    const url = `/api/alerts?severity=${encodeURIComponent(sev)}&status=${encodeURIComponent(stat)}&date_from=${dFrom}&date_to=${dTo}`;
+    const res  = await fetch(url);
     if (!res.ok) throw new Error("API Error");
     allRows = await res.json();
+    document.getElementById('alertCount').innerText = allRows.length;
   } catch (e) {
     console.error(e);
     allRows = [];
-    document.getElementById('alertsBody').innerHTML = `<tr><td colspan="9" class="text-center" style="padding:40px;color:var(--danger)">Failed to load data from server.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center" style="padding:40px;color:var(--danger)">Failed to load data from server.</td></tr>`;
+    document.getElementById('alertCount').innerText = '0';
     return;
   }
   curPage = 1;

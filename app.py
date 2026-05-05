@@ -44,8 +44,11 @@ def create_app():
     # Register blueprints
     from routes.api   import api_bp
     from routes.pages import pages_bp
+    from routes.ai    import ai_bp
+    
     app.register_blueprint(api_bp)
     app.register_blueprint(pages_bp)
+    app.register_blueprint(ai_bp)
 
     return app
 
@@ -53,6 +56,6 @@ def create_app():
 app = create_app()
 
 if __name__ == "__main__":
-    # Local development run
+    # Production run — debug=False prevents state loss from auto-reloader
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=Config.DEBUG)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
